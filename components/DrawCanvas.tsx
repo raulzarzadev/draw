@@ -1,11 +1,9 @@
 "use client";
 
-import {
-  Excalidraw,
-  serializeAsJSON,
-} from "@excalidraw/excalidraw";
+import PocketBaseClient from "pocketbase";
 import type PocketBase from "pocketbase";
 import type { AuthModel } from "pocketbase";
+import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type SceneData = {
@@ -25,13 +23,22 @@ type Drawing = {
   updated: string;
 };
 
-type ConfigState =
-  | { status: "loading" }
-  | { status: "missing" }
-  | {
-      status: "ready";
-      pb: PocketBase;
-    };
+type ExcalidrawModule = {
+  Excalidraw: ComponentType<{
+    initialData: SceneData;
+    onChange: (elements: unknown[], appState: unknown, files: unknown) => void;
+    UIOptions: Record<string, unknown>;
+  }>;
+  serializeAsJSON: (
+    elements: unknown[],
+    appState: unknown,
+    files: unknown,
+    localAppState: "local" | "database",
+  ) => string;
+};
+
+const pocketBaseUrl =
+  import.meta.env.VITE_POCKETBASE_URL ?? "https://pb.raulzarza.com";
 
 const emptyScene = (): SceneData => ({
   type: "excalidraw",
@@ -59,59 +66,9 @@ const getEmail = (user: AuthModel) => {
 };
 
 export default function DrawCanvas() {
-  const [config, setConfig] = useState<ConfigState>({ status: "loading" });
+  const pb = useMemo(() => new PocketBaseClient(pocketBaseUrl), []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/pocketbase-config")
-      .then((response) => response.json())
-      .then(async (payload: { configured: boolean; url: string }) => {
-        if (cancelled) {
-          return;
-        }
-
-        if (!payload.configured) {
-          setConfig({ status: "missing" });
-          return;
-        }
-
-        const { default: PocketBaseClient } = await import("pocketbase");
-
-        if (cancelled) {
-          return;
-        }
-
-        setConfig({
-          status: "ready",
-          pb: new PocketBaseClient(payload.url),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setConfig({ status: "missing" });
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (config.status === "loading") {
-    return <CenteredStatus title="Draw" message="Loading..." />;
-  }
-
-  if (config.status === "missing") {
-    return (
-      <CenteredStatus
-        title="PocketBase setup needed"
-        message="Set POCKETBASE_URL or make sure pb.raulzarza.com is online."
-      />
-    );
-  }
-
-  return <DrawWorkspace pb={config.pb} />;
+  return <DrawWorkspace pb={pb} />;
 }
 
 function DrawWorkspace({ pb }: { pb: PocketBase }) {
@@ -369,31 +326,11 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
                 <span>{status}</span>
               </div>
             </div>
-            <div className="canvas-frame">
-              <Excalidraw
-                key={activeDrawing.id}
-                initialData={activeDrawing.scene}
-                onChange={(elements, appState, files) => {
-                  const serialized = serializeAsJSON(
-                    elements,
-                    appState,
-                    files,
-                    "local",
-                  );
-                  scheduleSave(JSON.parse(serialized) as SceneData);
-                }}
-                UIOptions={{
-                  canvasActions: {
-                    changeViewBackgroundColor: true,
-                    clearCanvas: true,
-                    loadScene: true,
-                    saveAsImage: true,
-                    saveToActiveFile: true,
-                    toggleTheme: true,
-                  },
-                }}
-              />
-            </div>
+            <DrawingEditor
+              key={activeDrawing.id}
+              drawing={activeDrawing}
+              scheduleSave={scheduleSave}
+            />
           </>
         ) : (
           <div className="empty-state">
@@ -405,6 +342,80 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
         )}
       </section>
     </main>
+  );
+}
+
+function DrawingEditor({
+  drawing,
+  scheduleSave,
+}: {
+  drawing: Drawing;
+  scheduleSave: (scene: SceneData) => void;
+}) {
+  const [module, setModule] = useState<ExcalidrawModule | null>(null);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    import("@excalidraw/excalidraw")
+      .then((nextModule) => {
+        if (!cancelled) {
+          setModule(nextModule as ExcalidrawModule);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError(
+            error instanceof Error ? error.message : "Could not load canvas",
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loadError) {
+    return (
+      <div className="empty-state">
+        <h2>Canvas could not load</h2>
+        <p>{loadError}</p>
+      </div>
+    );
+  }
+
+  if (!module) {
+    return (
+      <div className="empty-state">
+        <h2>Loading canvas...</h2>
+      </div>
+    );
+  }
+
+  const { Excalidraw, serializeAsJSON } = module;
+
+  return (
+    <div className="canvas-frame">
+      <Excalidraw
+        initialData={drawing.scene}
+        onChange={(elements, appState, files) => {
+          const serialized = serializeAsJSON(elements, appState, files, "local");
+          scheduleSave(JSON.parse(serialized) as SceneData);
+        }}
+        UIOptions={{
+          canvasActions: {
+            changeViewBackgroundColor: true,
+            clearCanvas: true,
+            loadScene: true,
+            saveAsImage: true,
+            saveToActiveFile: true,
+            toggleTheme: true,
+          },
+        }}
+      />
+    </div>
   );
 }
 

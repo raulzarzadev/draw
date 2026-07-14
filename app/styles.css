@@ -9,6 +9,10 @@ body {
   margin: 0;
 }
 
+#root {
+  min-height: 100%;
+}
+
 body {
   overflow: hidden;
   background: #f6f7f9;
