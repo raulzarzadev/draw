@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build && node scripts/copy-hosting.mjs",
+    "build": "vite build --outDir dist/client --emptyOutDir && node scripts/copy-hosting.mjs",
     "start": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
