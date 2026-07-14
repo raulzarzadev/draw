@@ -118,6 +118,15 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
   }, [pb]);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 700px)");
+    const syncSidebar = () => setSidebarCollapsed(mediaQuery.matches);
+
+    syncSidebar();
+    mediaQuery.addEventListener("change", syncSidebar);
+    return () => mediaQuery.removeEventListener("change", syncSidebar);
+  }, []);
+
+  useEffect(() => {
     if (user) {
       void loadDrawings();
     }
