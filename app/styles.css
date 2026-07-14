@@ -11,7 +11,8 @@ body {
 
 body {
   overflow: hidden;
-  background: #ffffff;
+  background: #f6f7f9;
+  color: #17191c;
   font-family:
     Inter,
     ui-sans-serif,
@@ -22,15 +23,280 @@ body {
     sans-serif;
 }
 
-.app-shell {
-  width: 100vw;
-  height: 100vh;
+button,
+input {
+  font: inherit;
 }
 
-.excalidraw {
+button {
+  border: 1px solid #d7dbe2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17191c;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+button:hover {
+  background: #f0f3f7;
+}
+
+input {
+  min-height: 38px;
+  border: 1px solid #d7dbe2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17191c;
+  padding: 0 11px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: #626a73;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-panel {
+  width: min(380px, 100%);
+  border: 1px solid #dfe3e8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 24px;
+  box-shadow: 0 18px 50px rgb(25 31 43 / 10%);
+}
+
+.auth-panel h1 {
+  margin: 0 0 18px;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.auth-panel input,
+.auth-panel button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.auth-panel > button:not(.text-button) {
+  border-color: #111827;
+  background: #111827;
+  color: #ffffff;
+}
+
+.text-button {
+  border-color: transparent;
+  background: transparent;
+  color: #3e5684;
+}
+
+.auth-status {
+  margin: 12px 0 0;
+  color: #626a73;
+  font-size: 13px;
+}
+
+.draw-workspace {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.draw-sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid #dfe3e8;
+  background: #ffffff;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #edf0f4;
+  padding: 16px;
+}
+
+.sidebar-header h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.icon-button {
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.drawing-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.drawing-row {
+  display: grid;
+  width: 100%;
+  min-height: 58px;
+  justify-items: start;
+  gap: 4px;
+  border-color: transparent;
+  background: transparent;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.drawing-row.active {
+  border-color: #c8d3e5;
+  background: #eef4ff;
+}
+
+.drawing-row span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawing-row small,
+.account-panel span,
+.toolbar-actions span {
+  color: #68717d;
+  font-size: 12px;
+}
+
+.account-panel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #edf0f4;
+  padding: 12px 16px;
+}
+
+.account-panel span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-column {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #dfe3e8;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.canvas-toolbar input {
+  width: min(420px, 45vw);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.canvas-toolbar input:focus {
+  border-color: #b9c7db;
+  outline: none;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.danger {
+  color: #9f1d1d;
+}
+
+.canvas-frame {
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-frame .excalidraw {
   --color-primary: #5b57d1;
   --color-primary-darker: #4a46c0;
   --color-primary-darkest: #3733a4;
   --color-primary-light: #ecebff;
   --color-primary-light-darker: #dbd8ff;
+  width: 100%;
+  height: 100%;
+}
+
+.empty-state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+}
+
+.empty-state h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+@media (max-width: 760px) {
+  .draw-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 210px minmax(0, 1fr);
+  }
+
+  .draw-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dfe3e8;
+  }
+
+  .drawing-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .drawing-row {
+    width: 190px;
+    min-width: 190px;
+  }
+
+  .account-panel {
+    display: none;
+  }
+
+  .canvas-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .canvas-toolbar input {
+    width: 100%;
+  }
+
+  .toolbar-actions {
+    flex-wrap: wrap;
+  }
 }
