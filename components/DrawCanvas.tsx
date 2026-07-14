@@ -76,6 +76,7 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
   const [authReady, setAuthReady] = useState(false);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [status, setStatus] = useState("Ready");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
@@ -263,38 +264,55 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
   }
 
   return (
-    <main className="draw-workspace">
+    <main className={`draw-workspace ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="draw-sidebar">
         <div className="sidebar-header">
-          <div>
+          <button
+            aria-label={sidebarCollapsed ? "Show drawings" : "Hide drawings"}
+            className="icon-button"
+            type="button"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          >
+            {sidebarCollapsed ? "=" : "<"}
+          </button>
+          <div className="sidebar-title">
             <p className="eyebrow">Draw</p>
             <h1>My drawings</h1>
           </div>
-          <button className="icon-button" type="button" onClick={createDrawing}>
+          <button
+            aria-label="Create drawing"
+            className="icon-button"
+            type="button"
+            onClick={createDrawing}
+          >
             +
           </button>
         </div>
 
-        <div className="drawing-list">
-          {drawings.map((drawing) => (
-            <button
-              className={`drawing-row ${drawing.id === activeId ? "active" : ""}`}
-              key={drawing.id}
-              type="button"
-              onClick={() => setActiveId(drawing.id)}
-            >
-              <span>{drawing.title}</span>
-              <small>{formatTime(drawing.updated)}</small>
-            </button>
-          ))}
-        </div>
+        {!sidebarCollapsed ? (
+          <>
+            <div className="drawing-list">
+              {drawings.map((drawing) => (
+                <button
+                  className={`drawing-row ${drawing.id === activeId ? "active" : ""}`}
+                  key={drawing.id}
+                  type="button"
+                  onClick={() => setActiveId(drawing.id)}
+                >
+                  <span>{drawing.title}</span>
+                  <small>{formatTime(drawing.updated)}</small>
+                </button>
+              ))}
+            </div>
 
-        <div className="account-panel">
-          <span>{getEmail(user)}</span>
-          <button type="button" onClick={() => pb.authStore.clear()}>
-            Sign out
-          </button>
-        </div>
+            <div className="account-panel">
+              <span>{getEmail(user)}</span>
+              <button type="button" onClick={() => pb.authStore.clear()}>
+                Sign out
+              </button>
+            </div>
+          </>
+        ) : null}
       </aside>
 
       <section className="canvas-column">
