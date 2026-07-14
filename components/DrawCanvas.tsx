@@ -4,7 +4,8 @@ import {
   Excalidraw,
   serializeAsJSON,
 } from "@excalidraw/excalidraw";
-import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
+import type PocketBase from "pocketbase";
+import type { AuthModel } from "pocketbase";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type SceneData = {
@@ -20,8 +21,8 @@ type Drawing = {
   id: string;
   title: string;
   scene: SceneData;
-  created_at: string;
-  updated_at: string;
+  created: string;
+  updated: string;
 };
 
 type ConfigState =
@@ -29,7 +30,7 @@ type ConfigState =
   | { status: "missing" }
   | {
       status: "ready";
-      supabase: SupabaseClient;
+      pb: PocketBase;
     };
 
 const emptyScene = (): SceneData => ({
@@ -49,15 +50,23 @@ const formatTime = (value: string) =>
     timeStyle: "short",
   }).format(new Date(value));
 
+const getEmail = (user: AuthModel) => {
+  if (!user || typeof user !== "object" || !("email" in user)) {
+    return "";
+  }
+
+  return String(user.email ?? "");
+};
+
 export default function DrawCanvas() {
   const [config, setConfig] = useState<ConfigState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/supabase-config")
+    fetch("/api/pocketbase-config")
       .then((response) => response.json())
-      .then((payload: { configured: boolean; url: string; anonKey: string }) => {
+      .then(async (payload: { configured: boolean; url: string }) => {
         if (cancelled) {
           return;
         }
@@ -67,9 +76,15 @@ export default function DrawCanvas() {
           return;
         }
 
+        const { default: PocketBaseClient } = await import("pocketbase");
+
+        if (cancelled) {
+          return;
+        }
+
         setConfig({
           status: "ready",
-          supabase: createClient(payload.url, payload.anonKey),
+          pb: new PocketBaseClient(payload.url),
         });
       })
       .catch(() => {
@@ -90,17 +105,17 @@ export default function DrawCanvas() {
   if (config.status === "missing") {
     return (
       <CenteredStatus
-        title="Supabase setup needed"
-        message="Set SUPABASE_URL and SUPABASE_ANON_KEY in the site environment."
+        title="PocketBase setup needed"
+        message="Set POCKETBASE_URL or make sure pb.raulzarza.com is online."
       />
     );
   }
 
-  return <DrawWorkspace supabase={config.supabase} />;
+  return <DrawWorkspace pb={config.pb} />;
 }
 
-function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
-  const [user, setUser] = useState<User | null>(null);
+function DrawWorkspace({ pb }: { pb: PocketBase }) {
+  const [user, setUser] = useState<AuthModel>(pb.authStore.record);
   const [authReady, setAuthReady] = useState(false);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -115,38 +130,34 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
 
   const loadDrawings = useCallback(async () => {
     setStatus("Loading drawings...");
-    const { data, error } = await supabase
-      .from("drawings")
-      .select("id,title,scene,created_at,updated_at")
-      .order("updated_at", { ascending: false });
 
-    if (error) {
-      setStatus(error.message);
-      return;
+    try {
+      const nextDrawings = await pb.collection("drawings").getFullList<Drawing>({
+        sort: "-updated",
+        fields: "id,title,scene,created,updated",
+      });
+
+      setDrawings(nextDrawings);
+      setActiveId((current) => current ?? nextDrawings[0]?.id ?? null);
+      setStatus(nextDrawings.length ? "Ready" : "Create your first drawing");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not load drawings");
     }
-
-    const nextDrawings = (data ?? []) as Drawing[];
-    setDrawings(nextDrawings);
-    setActiveId((current) => current ?? nextDrawings[0]?.id ?? null);
-    setStatus(nextDrawings.length ? "Ready" : "Create your first drawing");
-  }, [supabase]);
+  }, [pb]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setAuthReady(true);
-    });
+    const unsubscribe = pb.authStore.onChange(
+      () => {
+        setUser(pb.authStore.record);
+        setDrawings([]);
+        setActiveId(null);
+      },
+      true,
+    );
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setDrawings([]);
-      setActiveId(null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+    setAuthReady(true);
+    return unsubscribe;
+  }, [pb]);
 
   useEffect(() => {
     if (user) {
@@ -160,25 +171,21 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
     }
 
     setStatus("Creating...");
-    const { data, error } = await supabase
-      .from("drawings")
-      .insert({
-        owner_id: user.id,
+
+    try {
+      const drawing = await pb.collection("drawings").create<Drawing>({
+        owner: user.id,
         title: "Untitled drawing",
         scene: emptyScene(),
-      })
-      .select("id,title,scene,created_at,updated_at")
-      .single();
+      });
 
-    if (error) {
-      setStatus(error.message);
-      return;
+      setDrawings((items) => [drawing, ...items]);
+      setActiveId(drawing.id);
+      setStatus("Created");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create drawing");
     }
-
-    setDrawings((items) => [data as Drawing, ...items]);
-    setActiveId((data as Drawing).id);
-    setStatus("Created");
-  }, [supabase, user]);
+  }, [pb, user]);
 
   const renameDrawing = useCallback(
     async (drawing: Drawing, title: string) => {
@@ -189,33 +196,31 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
         ),
       );
 
-      const { error } = await supabase
-        .from("drawings")
-        .update({ title: nextTitle })
-        .eq("id", drawing.id);
-
-      setStatus(error ? error.message : "Renamed");
+      try {
+        await pb.collection("drawings").update(drawing.id, { title: nextTitle });
+        setStatus("Renamed");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not rename");
+      }
     },
-    [supabase],
+    [pb],
   );
 
   const deleteDrawing = useCallback(
     async (drawing: Drawing) => {
-      const { error } = await supabase.from("drawings").delete().eq("id", drawing.id);
-
-      if (error) {
-        setStatus(error.message);
-        return;
+      try {
+        await pb.collection("drawings").delete(drawing.id);
+        setDrawings((items) => {
+          const next = items.filter((item) => item.id !== drawing.id);
+          setActiveId(next[0]?.id ?? null);
+          return next;
+        });
+        setStatus("Deleted");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not delete");
       }
-
-      setDrawings((items) => {
-        const next = items.filter((item) => item.id !== drawing.id);
-        setActiveId(next[0]?.id ?? null);
-        return next;
-      });
-      setStatus("Deleted");
     },
-    [supabase],
+    [pb],
   );
 
   const duplicateDrawing = useCallback(
@@ -224,52 +229,43 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("drawings")
-        .insert({
-          owner_id: user.id,
+      try {
+        const duplicate = await pb.collection("drawings").create<Drawing>({
+          owner: user.id,
           title: `${drawing.title} copy`,
           scene: drawing.scene,
-        })
-        .select("id,title,scene,created_at,updated_at")
-        .single();
+        });
 
-      if (error) {
-        setStatus(error.message);
-        return;
+        setDrawings((items) => [duplicate, ...items]);
+        setActiveId(duplicate.id);
+        setStatus("Duplicated");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not duplicate");
       }
-
-      setDrawings((items) => [data as Drawing, ...items]);
-      setActiveId((data as Drawing).id);
-      setStatus("Duplicated");
     },
-    [supabase, user],
+    [pb, user],
   );
 
   const saveScene = useCallback(
     async (drawingId: string, scene: SceneData) => {
       setStatus("Saving...");
-      const { data, error } = await supabase
-        .from("drawings")
-        .update({ scene })
-        .eq("id", drawingId)
-        .select("updated_at")
-        .single();
 
-      if (error) {
-        setStatus(error.message);
-        return;
+      try {
+        const updated = await pb
+          .collection("drawings")
+          .update<Pick<Drawing, "updated">>(drawingId, { scene }, { fields: "updated" });
+
+        setDrawings((items) =>
+          items.map((item) =>
+            item.id === drawingId ? { ...item, scene, updated: updated.updated } : item,
+          ),
+        );
+        setStatus("Saved");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Could not save");
       }
-
-      const updatedAt = (data as Pick<Drawing, "updated_at">).updated_at;
-      setDrawings((items) =>
-        items.map((item) =>
-          item.id === drawingId ? { ...item, scene, updated_at: updatedAt } : item,
-        ),
-      );
-      setStatus("Saved");
     },
-    [supabase],
+    [pb],
   );
 
   const scheduleSave = useCallback(
@@ -306,7 +302,7 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
   }
 
   if (!user) {
-    return <AuthPanel supabase={supabase} />;
+    return <AuthPanel pb={pb} />;
   }
 
   return (
@@ -331,14 +327,14 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
               onClick={() => setActiveId(drawing.id)}
             >
               <span>{drawing.title}</span>
-              <small>{formatTime(drawing.updated_at)}</small>
+              <small>{formatTime(drawing.updated)}</small>
             </button>
           ))}
         </div>
 
         <div className="account-panel">
-          <span>{user.email}</span>
-          <button type="button" onClick={() => void supabase.auth.signOut()}>
+          <span>{getEmail(user)}</span>
+          <button type="button" onClick={() => pb.authStore.clear()}>
             Sign out
           </button>
         </div>
@@ -412,7 +408,7 @@ function DrawWorkspace({ supabase }: { supabase: SupabaseClient }) {
   );
 }
 
-function AuthPanel({ supabase }: { supabase: SupabaseClient }) {
+function AuthPanel({ pb }: { pb: PocketBase }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -420,18 +416,24 @@ function AuthPanel({ supabase }: { supabase: SupabaseClient }) {
 
   const submit = async () => {
     setStatus("Working...");
-    const result =
-      mode === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
 
-    setStatus(
-      result.error
-        ? result.error.message
-        : mode === "signin"
-          ? "Signed in"
-          : "Account created. Check your email if confirmation is enabled.",
-    );
+    try {
+      if (mode === "signin") {
+        await pb.collection("users").authWithPassword(email, password);
+        setStatus("Signed in");
+        return;
+      }
+
+      await pb.collection("users").create({
+        email,
+        password,
+        passwordConfirm: password,
+      });
+      await pb.collection("users").authWithPassword(email, password);
+      setStatus("Account created");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Auth failed");
+    }
   };
 
   return (

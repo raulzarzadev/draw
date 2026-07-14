@@ -15,10 +15,10 @@
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.15.2",
     "@excalidraw/excalidraw": "^0.18.1",
-    "@supabase/supabase-js": "^2.110.5",
     "@vinext/cloudflare": "^1.0.0-beta.1",
     "@vitejs/plugin-react": "^5.1.4",
     "@vitejs/plugin-rsc": "^0.5.26",
+    "pocketbase": "^0.27.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-server-dom-webpack": "19.2.7",
