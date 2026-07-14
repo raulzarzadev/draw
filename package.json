@@ -4,20 +4,29 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "dev": "vinext dev --hostname 0.0.0.0",
+    "build": "vinext build && node scripts/copy-hosting.mjs",
+    "start": "vinext start --hostname 0.0.0.0",
+    "dev:vinext": "vinext dev --port 3001",
+    "build:vinext": "vinext build",
+    "start:vinext": "wrangler dev --config dist/server/wrangler.json",
+    "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json"
   },
   "dependencies": {
+    "@cloudflare/vite-plugin": "^1.15.2",
     "@excalidraw/excalidraw": "^0.18.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7",
-    "typescript": "^5.7.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "@vinext/cloudflare": "^1.0.0-beta.1",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@vitejs/plugin-rsc": "^0.5.26",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-server-dom-webpack": "19.2.7",
+    "typescript": "^5.9.3",
+    "vinext": "^1.0.0-beta.1",
+    "vite": "^8.0.0"
   },
   "devDependencies": {
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5"
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3"
   }
 }
