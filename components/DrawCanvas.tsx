@@ -6,6 +6,17 @@ import type { AuthModel } from "pocketbase";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+type Locale = "es" | "en";
+type IconName =
+  | "chevronLeft"
+  | "cloud"
+  | "copy"
+  | "logOut"
+  | "menu"
+  | "plus"
+  | "trash"
+  | "user";
+
 type SceneData = {
   type?: string;
   version?: number;
@@ -23,9 +34,12 @@ type Drawing = {
   updated: string;
 };
 
+type AuthMode = "signin" | "signup";
+
 type ExcalidrawModule = {
   Excalidraw: ComponentType<{
     initialData: SceneData;
+    langCode?: string;
     onChange: (elements: unknown[], appState: unknown, files: unknown) => void;
     UIOptions: Record<string, unknown>;
   }>;
@@ -39,6 +53,8 @@ type ExcalidrawModule = {
 
 const pocketBaseUrl =
   import.meta.env.VITE_POCKETBASE_URL ?? "https://pb.raulzarza.com";
+const localDrawingId = "local-free-drawing";
+const localDrawingStorageKey = "draw-local-drawing";
 
 const emptyScene = (): SceneData => ({
   type: "excalidraw",
@@ -51,8 +67,203 @@ const emptyScene = (): SceneData => ({
   files: {},
 });
 
-const formatTime = (value: string) =>
-  new Intl.DateTimeFormat(undefined, {
+const createLocalDrawing = (title: string): Drawing => {
+  const now = new Date().toISOString();
+
+  return {
+    id: localDrawingId,
+    title,
+    scene: emptyScene(),
+    created: now,
+    updated: now,
+  };
+};
+
+const isDrawing = (value: unknown): value is Drawing => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const drawing = value as Partial<Drawing>;
+  return (
+    typeof drawing.id === "string" &&
+    typeof drawing.title === "string" &&
+    typeof drawing.created === "string" &&
+    typeof drawing.updated === "string" &&
+    !!drawing.scene &&
+    typeof drawing.scene === "object"
+  );
+};
+
+const loadLocalDrawing = (title: string): Drawing => {
+  if (typeof window === "undefined") {
+    return createLocalDrawing(title);
+  }
+
+  const rawDrawing = window.localStorage.getItem(localDrawingStorageKey);
+
+  if (!rawDrawing) {
+    return createLocalDrawing(title);
+  }
+
+  try {
+    const parsed = JSON.parse(rawDrawing) as unknown;
+    return isDrawing(parsed) ? { ...parsed, id: localDrawingId } : createLocalDrawing(title);
+  } catch {
+    return createLocalDrawing(title);
+  }
+};
+
+const saveLocalDrawing = (drawing: Drawing) => {
+  window.localStorage.setItem(
+    localDrawingStorageKey,
+    JSON.stringify({ ...drawing, id: localDrawingId }),
+  );
+};
+
+const translations = {
+  es: {
+    appName: "Draw",
+    auth: {
+      accountCreated: "Cuenta creada",
+      checkingSession: "Revisando sesion...",
+      cloudPrompt:
+        "Crea una cuenta gratis para guardar en la nube y tener mas pizarras.",
+      createAccount: "Crear cuenta",
+      email: "Correo",
+      emailExists: "Ese correo ya tiene cuenta. Inicia sesion.",
+      emailPasswordRequired: "Escribe correo y contrasena.",
+      incorrectLogin: "Correo o contrasena incorrectos.",
+      needAccount: "Necesitas cuenta?",
+      password: "Contrasena",
+      passwordMin: "La contrasena debe tener al menos 8 caracteres.",
+      signIn: "Iniciar sesion",
+      signedIn: "Sesion iniciada",
+      submitError: "No se pudo crear la cuenta. Revisa el correo y contrasena.",
+      switchToSignIn: "Ya tienes cuenta?",
+      working: "Procesando...",
+    },
+    labels: {
+      cloudSave: "Guardar en nube",
+      close: "Cerrar",
+      createDrawing: "Crear dibujo",
+      delete: "Eliminar",
+      duplicate: "Duplicar",
+      freePlan: "Gratis local",
+      hideDrawings: "Ocultar dibujos",
+      language: "Idioma",
+      showDrawings: "Mostrar dibujos",
+      signOut: "Salir",
+      title: "Titulo del dibujo",
+    },
+    status: {
+      accountRequiredForCloud:
+        "Crea una cuenta para guardar en la nube y tener mas pizarras.",
+      accountRequiredForMore: "Crea una cuenta para crear mas pizarras.",
+      canvasLoadError: "No se pudo cargar el canvas",
+      canvasLoading: "Cargando canvas...",
+      couldNotCreate: "No se pudo crear el dibujo",
+      couldNotDelete: "No se pudo eliminar",
+      couldNotDuplicate: "No se pudo duplicar",
+      couldNotLoad: "No se pudieron cargar los dibujos",
+      couldNotRename: "No se pudo renombrar",
+      couldNotSave: "No se pudo guardar",
+      createFirst: "Crea tu primer dibujo",
+      created: "Creado",
+      creating: "Creando...",
+      deleted: "Eliminado",
+      duplicated: "Duplicado",
+      loading: "Cargando dibujos...",
+      noDrawings: "Aun no hay dibujos",
+      ready: "Listo",
+      renamed: "Renombrado",
+      saved: "Guardado",
+      savedLocally: "Guardado local",
+      saving: "Guardando...",
+    },
+    terms: {
+      copySuffix: "copia",
+      myDrawings: "Mis dibujos",
+      untitledDrawing: "Dibujo sin titulo",
+    },
+  },
+  en: {
+    appName: "Draw",
+    auth: {
+      accountCreated: "Account created",
+      checkingSession: "Checking session...",
+      cloudPrompt:
+        "Create a free account to save to the cloud and keep more boards.",
+      createAccount: "Create account",
+      email: "Email",
+      emailExists: "That email already has an account. Sign in instead.",
+      emailPasswordRequired: "Enter email and password.",
+      incorrectLogin: "Email or password is incorrect.",
+      needAccount: "Need an account?",
+      password: "Password",
+      passwordMin: "Password must be at least 8 characters.",
+      signIn: "Sign in",
+      signedIn: "Signed in",
+      submitError: "Could not create the account. Check the email and password.",
+      switchToSignIn: "Already have an account?",
+      working: "Working...",
+    },
+    labels: {
+      cloudSave: "Save to cloud",
+      close: "Close",
+      createDrawing: "Create drawing",
+      delete: "Delete",
+      duplicate: "Duplicate",
+      freePlan: "Free local",
+      hideDrawings: "Hide drawings",
+      language: "Language",
+      showDrawings: "Show drawings",
+      signOut: "Sign out",
+      title: "Drawing title",
+    },
+    status: {
+      accountRequiredForCloud:
+        "Create an account to save to the cloud and keep more boards.",
+      accountRequiredForMore: "Create an account to create more boards.",
+      canvasLoadError: "Canvas could not load",
+      canvasLoading: "Loading canvas...",
+      couldNotCreate: "Could not create drawing",
+      couldNotDelete: "Could not delete",
+      couldNotDuplicate: "Could not duplicate",
+      couldNotLoad: "Could not load drawings",
+      couldNotRename: "Could not rename",
+      couldNotSave: "Could not save",
+      createFirst: "Create your first drawing",
+      created: "Created",
+      creating: "Creating...",
+      deleted: "Deleted",
+      duplicated: "Duplicated",
+      loading: "Loading drawings...",
+      noDrawings: "No drawings yet",
+      ready: "Ready",
+      renamed: "Renamed",
+      saved: "Saved",
+      savedLocally: "Saved locally",
+      saving: "Saving...",
+    },
+    terms: {
+      copySuffix: "copy",
+      myDrawings: "My drawings",
+      untitledDrawing: "Untitled drawing",
+    },
+  },
+} as const;
+
+const getInitialLocale = (): Locale => {
+  if (typeof window === "undefined") {
+    return "es";
+  }
+
+  return window.localStorage.getItem("draw-locale") === "en" ? "en" : "es";
+};
+
+const formatTime = (value: string, locale: Locale) =>
+  new Intl.DateTimeFormat(locale === "es" ? "es-MX" : "en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
@@ -76,59 +287,142 @@ const hasPocketBaseCode = (error: unknown, field: string, code: string) => {
   return data?.[field]?.code === code;
 };
 
-const getAuthErrorMessage = (error: unknown, mode: "signin" | "signup") => {
+const getAuthErrorMessage = (
+  error: unknown,
+  mode: "signin" | "signup",
+  locale: Locale,
+) => {
+  const t = translations[locale].auth;
+
   if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
-    return "That email already has an account. Sign in instead.";
+    return t.emailExists;
   }
 
   if (mode === "signin") {
-    return "Email or password is incorrect.";
+    return t.incorrectLogin;
   }
 
   if (error instanceof Error && error.message !== "Failed to create record.") {
     return error.message;
   }
 
-  return "Could not create the account. Check the email and password.";
+  return t.submitError;
 };
 
 export default function DrawCanvas() {
   const pb = useMemo(() => new PocketBaseClient(pocketBaseUrl), []);
+  const [locale, setLocale] = useState<Locale>(getInitialLocale);
 
-  return <DrawWorkspace pb={pb} />;
+  const changeLocale = (nextLocale: Locale) => {
+    setLocale(nextLocale);
+    window.localStorage.setItem("draw-locale", nextLocale);
+  };
+
+  return <DrawWorkspace locale={locale} pb={pb} setLocale={changeLocale} />;
 }
 
-function DrawWorkspace({ pb }: { pb: PocketBase }) {
+function DrawWorkspace({
+  locale,
+  pb,
+  setLocale,
+}: {
+  locale: Locale;
+  pb: PocketBase;
+  setLocale: (locale: Locale) => void;
+}) {
+  const t = translations[locale];
   const [user, setUser] = useState<AuthModel>(pb.authStore.record);
   const [authReady, setAuthReady] = useState(false);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState(t.status.ready);
+  const [authPromptMode, setAuthPromptMode] = useState<AuthMode | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
+  const localDraftToImport = useRef<Drawing | null>(null);
+  const isCloudAccount = !!user;
+
+  useEffect(() => {
+    setStatus((current) =>
+      current === translations.es.status.ready || current === translations.en.status.ready
+        ? t.status.ready
+        : current,
+    );
+  }, [t.status.ready]);
 
   const activeDrawing = useMemo(
     () => drawings.find((drawing) => drawing.id === activeId) ?? null,
     [activeId, drawings],
   );
 
-  const loadDrawings = useCallback(async () => {
-    setStatus("Loading drawings...");
+  const openAuthPrompt = useCallback(
+    (mode: AuthMode, message?: string, importCurrentDrawing = false) => {
+      if (importCurrentDrawing && !user && activeDrawing) {
+        localDraftToImport.current = activeDrawing;
+      }
+
+      setAuthPromptMode(mode);
+      if (message) {
+        setStatus(message);
+      }
+    },
+    [activeDrawing, user],
+  );
+
+  const closeAuthPrompt = useCallback(() => setAuthPromptMode(null), []);
+
+  const loadFreeDrawing = useCallback(() => {
+    const drawing = loadLocalDrawing(t.terms.untitledDrawing);
+    setDrawings([drawing]);
+    setActiveId(drawing.id);
+    setStatus(t.status.savedLocally);
+  }, [t.status.savedLocally, t.terms.untitledDrawing]);
+
+  const loadDrawings = useCallback(async (drawingToImport?: Drawing | null) => {
+    setStatus(t.status.loading);
 
     try {
       const nextDrawings = await pb.collection("drawings").getFullList<Drawing>({
         sort: "-updated",
         fields: "id,title,scene,created,updated",
       });
+      const importedDrawing =
+        drawingToImport && user
+          ? await pb.collection("drawings").create<Drawing>({
+              owner: user.id,
+              title: drawingToImport.title,
+              scene: drawingToImport.scene,
+            })
+          : null;
+      const allDrawings = importedDrawing
+        ? [importedDrawing, ...nextDrawings]
+        : nextDrawings;
 
-      setDrawings(nextDrawings);
-      setActiveId((current) => current ?? nextDrawings[0]?.id ?? null);
-      setStatus(nextDrawings.length ? "Ready" : "Create your first drawing");
+      if (importedDrawing) {
+        localDraftToImport.current = null;
+      }
+      setDrawings(allDrawings);
+      setActiveId((current) => current ?? allDrawings[0]?.id ?? null);
+      setStatus(
+        importedDrawing
+          ? t.status.saved
+          : allDrawings.length
+            ? t.status.ready
+            : t.status.createFirst,
+      );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not load drawings");
+      setStatus(error instanceof Error ? error.message : t.status.couldNotLoad);
     }
-  }, [pb]);
+  }, [
+    pb,
+    t.status.couldNotLoad,
+    t.status.createFirst,
+    t.status.loading,
+    t.status.ready,
+    t.status.saved,
+    user,
+  ]);
 
   useEffect(() => {
     const unsubscribe = pb.authStore.onChange(
@@ -155,53 +449,92 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
 
   useEffect(() => {
     if (user) {
-      void loadDrawings();
+      setAuthPromptMode(null);
+      void loadDrawings(localDraftToImport.current);
+      return;
     }
-  }, [loadDrawings, user]);
+    loadFreeDrawing();
+  }, [loadDrawings, loadFreeDrawing, user]);
 
   const createDrawing = useCallback(async () => {
     if (!user) {
+      openAuthPrompt("signup", t.status.accountRequiredForMore, true);
       return;
     }
 
-    setStatus("Creating...");
+    setStatus(t.status.creating);
 
     try {
       const drawing = await pb.collection("drawings").create<Drawing>({
         owner: user.id,
-        title: "Untitled drawing",
+        title: t.terms.untitledDrawing,
         scene: emptyScene(),
       });
 
       setDrawings((items) => [drawing, ...items]);
       setActiveId(drawing.id);
-      setStatus("Created");
+      setStatus(t.status.created);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not create drawing");
+      setStatus(error instanceof Error ? error.message : t.status.couldNotCreate);
     }
-  }, [pb, user]);
+  }, [
+    pb,
+    t.status.couldNotCreate,
+    t.status.created,
+    t.status.creating,
+    t.terms.untitledDrawing,
+    t.status.accountRequiredForMore,
+    openAuthPrompt,
+    user,
+  ]);
 
   const renameDrawing = useCallback(
     async (drawing: Drawing, title: string) => {
-      const nextTitle = title.trim() || "Untitled drawing";
+      const nextTitle = title.trim() || t.terms.untitledDrawing;
+      const nextDrawing = { ...drawing, title: nextTitle, updated: new Date().toISOString() };
+
       setDrawings((items) =>
         items.map((item) =>
-          item.id === drawing.id ? { ...item, title: nextTitle } : item,
+          item.id === drawing.id ? nextDrawing : item,
         ),
       );
 
+      if (!user) {
+        localDraftToImport.current = nextDrawing;
+        saveLocalDrawing(nextDrawing);
+        setStatus(t.status.savedLocally);
+        return;
+      }
+
       try {
         await pb.collection("drawings").update(drawing.id, { title: nextTitle });
-        setStatus("Renamed");
+        setStatus(t.status.renamed);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Could not rename");
+        setStatus(error instanceof Error ? error.message : t.status.couldNotRename);
       }
     },
-    [pb],
+    [
+      pb,
+      t.status.couldNotRename,
+      t.status.renamed,
+      t.status.savedLocally,
+      t.terms.untitledDrawing,
+      user,
+    ],
   );
 
   const deleteDrawing = useCallback(
     async (drawing: Drawing) => {
+      if (!user) {
+        const nextDrawing = createLocalDrawing(t.terms.untitledDrawing);
+        saveLocalDrawing(nextDrawing);
+        localDraftToImport.current = null;
+        setDrawings([nextDrawing]);
+        setActiveId(nextDrawing.id);
+        setStatus(t.status.savedLocally);
+        return;
+      }
+
       try {
         await pb.collection("drawings").delete(drawing.id);
         setDrawings((items) => {
@@ -209,40 +542,72 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
           setActiveId(next[0]?.id ?? null);
           return next;
         });
-        setStatus("Deleted");
+        setStatus(t.status.deleted);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Could not delete");
+        setStatus(error instanceof Error ? error.message : t.status.couldNotDelete);
       }
     },
-    [pb],
+    [pb, t.status.couldNotDelete, t.status.deleted, t.status.savedLocally, t.terms.untitledDrawing, user],
   );
 
   const duplicateDrawing = useCallback(
     async (drawing: Drawing) => {
       if (!user) {
+        openAuthPrompt("signup", t.status.accountRequiredForMore, true);
         return;
       }
 
       try {
         const duplicate = await pb.collection("drawings").create<Drawing>({
           owner: user.id,
-          title: `${drawing.title} copy`,
+          title: `${drawing.title} ${t.terms.copySuffix}`,
           scene: drawing.scene,
         });
 
         setDrawings((items) => [duplicate, ...items]);
         setActiveId(duplicate.id);
-        setStatus("Duplicated");
+        setStatus(t.status.duplicated);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Could not duplicate");
+        setStatus(error instanceof Error ? error.message : t.status.couldNotDuplicate);
       }
     },
-    [pb, user],
+    [
+      pb,
+      t.status.accountRequiredForMore,
+      t.status.couldNotDuplicate,
+      t.status.duplicated,
+      t.terms.copySuffix,
+      openAuthPrompt,
+      user,
+    ],
   );
 
   const saveScene = useCallback(
     async (drawingId: string, scene: SceneData) => {
-      setStatus("Saving...");
+      if (!user) {
+        const updated = new Date().toISOString();
+        let nextDrawing: Drawing | null = null;
+
+        setDrawings((items) =>
+          items.map((item) => {
+            if (item.id !== drawingId) {
+              return item;
+            }
+
+            nextDrawing = { ...item, scene, updated };
+            return nextDrawing;
+          }),
+        );
+
+        if (nextDrawing) {
+          localDraftToImport.current = nextDrawing;
+          saveLocalDrawing(nextDrawing);
+        }
+        setStatus(t.status.savedLocally);
+        return;
+      }
+
+      setStatus(t.status.saving);
 
       try {
         const updated = await pb
@@ -254,12 +619,12 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
             item.id === drawingId ? { ...item, scene, updated: updated.updated } : item,
           ),
         );
-        setStatus("Saved");
+        setStatus(t.status.saved);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : "Could not save");
+        setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
       }
     },
-    [pb],
+    [pb, t.status.couldNotSave, t.status.saved, t.status.savedLocally, t.status.saving, user],
   );
 
   const scheduleSave = useCallback(
@@ -292,11 +657,7 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
   }, []);
 
   if (!authReady) {
-    return <CenteredStatus title="Draw" message="Checking session..." />;
-  }
-
-  if (!user) {
-    return <AuthPanel pb={pb} />;
+    return <CenteredStatus title={t.appName} message={t.auth.checkingSession} />;
   }
 
   return (
@@ -304,24 +665,26 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
       <aside className="draw-sidebar">
         <div className="sidebar-header">
           <button
-            aria-label={sidebarCollapsed ? "Show drawings" : "Hide drawings"}
+            aria-label={sidebarCollapsed ? t.labels.showDrawings : t.labels.hideDrawings}
             className="icon-button"
+            title={sidebarCollapsed ? t.labels.showDrawings : t.labels.hideDrawings}
             type="button"
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            {sidebarCollapsed ? "=" : "<"}
+            <Icon name={sidebarCollapsed ? "menu" : "chevronLeft"} />
           </button>
           <div className="sidebar-title">
-            <p className="eyebrow">Draw</p>
-            <h1>My drawings</h1>
+            <p className="eyebrow">{t.appName}</p>
+            <h1>{t.terms.myDrawings}</h1>
           </div>
           <button
-            aria-label="Create drawing"
+            aria-label={t.labels.createDrawing}
             className="icon-button"
+            title={t.labels.createDrawing}
             type="button"
             onClick={createDrawing}
           >
-            +
+            <Icon name="plus" />
           </button>
         </div>
 
@@ -336,16 +699,41 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
                   onClick={() => setActiveId(drawing.id)}
                 >
                   <span>{drawing.title}</span>
-                  <small>{formatTime(drawing.updated)}</small>
+                  <small>{formatTime(drawing.updated, locale)}</small>
                 </button>
               ))}
             </div>
 
             <div className="account-panel">
-              <span>{getEmail(user)}</span>
-              <button type="button" onClick={() => pb.authStore.clear()}>
-                Sign out
-              </button>
+              <span>{user ? getEmail(user) : t.labels.freePlan}</span>
+              <div className="account-actions">
+                <LanguageSwitcher
+                  label={t.labels.language}
+                  locale={locale}
+                  setLocale={setLocale}
+                />
+                {user ? (
+                  <button
+                    aria-label={t.labels.signOut}
+                    className="icon-button"
+                    title={t.labels.signOut}
+                    type="button"
+                    onClick={() => pb.authStore.clear()}
+                  >
+                    <Icon name="logOut" />
+                  </button>
+                ) : (
+                  <button
+                    className="icon-text-button"
+                    type="button"
+                    onClick={() => openAuthPrompt("signup", undefined, true)}
+                  >
+                    <Icon name="user" />
+                    <span>{t.auth.createAccount}</span>
+                  </button>
+                )}
+              </div>
+              {!user ? <p>{t.auth.cloudPrompt}</p> : null}
             </div>
           </>
         ) : null}
@@ -356,7 +744,7 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
           <>
             <div className="canvas-toolbar">
               <input
-                aria-label="Drawing title"
+                aria-label={t.labels.title}
                 defaultValue={activeDrawing.title}
                 key={activeDrawing.id}
                 onBlur={(event) =>
@@ -364,18 +752,39 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
                 }
               />
               <div className="toolbar-actions">
+                {!isCloudAccount ? (
+                  <button
+                    aria-label={t.labels.cloudSave}
+                    className="icon-text-button primary"
+                    title={t.labels.cloudSave}
+                    type="button"
+                    onClick={() =>
+                      openAuthPrompt("signup", t.status.accountRequiredForCloud, true)
+                    }
+                  >
+                    <Icon name="cloud" />
+                    <span>{t.labels.cloudSave}</span>
+                  </button>
+                ) : null}
                 <button
+                  aria-label={t.labels.duplicate}
+                  className="icon-text-button"
+                  title={t.labels.duplicate}
                   type="button"
                   onClick={() => void duplicateDrawing(activeDrawing)}
                 >
-                  Duplicate
+                  <Icon name="copy" />
+                  <span>{t.labels.duplicate}</span>
                 </button>
                 <button
-                  className="danger"
+                  aria-label={t.labels.delete}
+                  className="icon-text-button danger"
+                  title={t.labels.delete}
                   type="button"
                   onClick={() => void deleteDrawing(activeDrawing)}
                 >
-                  Delete
+                  <Icon name="trash" />
+                  <span>{t.labels.delete}</span>
                 </button>
                 <span>{status}</span>
               </div>
@@ -383,31 +792,45 @@ function DrawWorkspace({ pb }: { pb: PocketBase }) {
             <DrawingEditor
               key={activeDrawing.id}
               drawing={activeDrawing}
+              locale={locale}
               scheduleSave={scheduleSave}
             />
           </>
         ) : (
           <div className="empty-state">
-            <h2>No drawings yet</h2>
-            <button type="button" onClick={createDrawing}>
-              Create drawing
+            <h2>{t.status.noDrawings}</h2>
+            <button className="icon-text-button" type="button" onClick={createDrawing}>
+              <Icon name="plus" />
+              <span>{t.labels.createDrawing}</span>
             </button>
           </div>
         )}
       </section>
+      {authPromptMode ? (
+        <AuthPanel
+          initialMode={authPromptMode}
+          locale={locale}
+          pb={pb}
+          setLocale={setLocale}
+          onClose={closeAuthPrompt}
+        />
+      ) : null}
     </main>
   );
 }
 
 function DrawingEditor({
   drawing,
+  locale,
   scheduleSave,
 }: {
   drawing: Drawing;
+  locale: Locale;
   scheduleSave: (scene: SceneData) => void;
 }) {
   const [module, setModule] = useState<ExcalidrawModule | null>(null);
   const [loadError, setLoadError] = useState("");
+  const t = translations[locale];
 
   useEffect(() => {
     let cancelled = false;
@@ -421,7 +844,7 @@ function DrawingEditor({
       .catch((error) => {
         if (!cancelled) {
           setLoadError(
-            error instanceof Error ? error.message : "Could not load canvas",
+            error instanceof Error ? error.message : t.status.canvasLoadError,
           );
         }
       });
@@ -429,12 +852,12 @@ function DrawingEditor({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t.status.canvasLoadError]);
 
   if (loadError) {
     return (
       <div className="empty-state">
-        <h2>Canvas could not load</h2>
+        <h2>{t.status.canvasLoadError}</h2>
         <p>{loadError}</p>
       </div>
     );
@@ -443,7 +866,7 @@ function DrawingEditor({
   if (!module) {
     return (
       <div className="empty-state">
-        <h2>Loading canvas...</h2>
+        <h2>{t.status.canvasLoading}</h2>
       </div>
     );
   }
@@ -454,6 +877,7 @@ function DrawingEditor({
     <div className="canvas-frame">
       <Excalidraw
         initialData={drawing.scene}
+        langCode={locale === "es" ? "es-ES" : "en"}
         onChange={(elements, appState, files) => {
           const serialized = serializeAsJSON(elements, appState, files, "local");
           scheduleSave(JSON.parse(serialized) as SceneData);
@@ -473,8 +897,21 @@ function DrawingEditor({
   );
 }
 
-function AuthPanel({ pb }: { pb: PocketBase }) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+function AuthPanel({
+  initialMode = "signin",
+  locale,
+  onClose,
+  pb,
+  setLocale,
+}: {
+  initialMode?: AuthMode;
+  locale: Locale;
+  onClose?: () => void;
+  pb: PocketBase;
+  setLocale: (locale: Locale) => void;
+}) {
+  const t = translations[locale];
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
@@ -484,22 +921,22 @@ function AuthPanel({ pb }: { pb: PocketBase }) {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail || !password) {
-      setStatus("Enter email and password.");
+      setStatus(t.auth.emailPasswordRequired);
       return;
     }
 
     if (password.length < 8) {
-      setStatus("Password must be at least 8 characters.");
+      setStatus(t.auth.passwordMin);
       return;
     }
 
     setIsSubmitting(true);
-    setStatus("Working...");
+    setStatus(t.auth.working);
 
     try {
       if (mode === "signin") {
         await pb.collection("users").authWithPassword(normalizedEmail, password);
-        setStatus("Signed in");
+        setStatus(t.auth.signedIn);
         return;
       }
 
@@ -509,53 +946,159 @@ function AuthPanel({ pb }: { pb: PocketBase }) {
         passwordConfirm: password,
       });
       await pb.collection("users").authWithPassword(normalizedEmail, password);
-      setStatus("Account created");
+      setStatus(t.auth.accountCreated);
     } catch (error) {
       if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
         setMode("signin");
       }
-      setStatus(getAuthErrorMessage(error, mode));
+      setStatus(getAuthErrorMessage(error, mode, locale));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <main className="auth-shell">
+    <div className={onClose ? "auth-shell auth-modal" : "auth-shell"}>
       <section className="auth-panel">
-        <p className="eyebrow">Draw</p>
-        <h1>{mode === "signin" ? "Sign in" : "Create account"}</h1>
+        <div className="auth-header">
+          <div>
+            <p className="eyebrow">{t.appName}</p>
+            <h1>{mode === "signin" ? t.auth.signIn : t.auth.createAccount}</h1>
+          </div>
+          <div className="auth-header-actions">
+            <LanguageSwitcher
+              label={t.labels.language}
+              locale={locale}
+              setLocale={setLocale}
+            />
+            {onClose ? (
+              <button
+                aria-label={t.labels.close}
+                className="icon-button"
+                title={t.labels.close}
+                type="button"
+                onClick={onClose}
+              >
+                <Icon name="chevronLeft" />
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <p className="auth-description">{t.auth.cloudPrompt}</p>
         <input
           autoComplete="email"
           onChange={(event) => setEmail(event.currentTarget.value)}
-          placeholder="Email"
+          placeholder={t.auth.email}
           type="email"
           value={email}
         />
         <input
           autoComplete={mode === "signin" ? "current-password" : "new-password"}
           onChange={(event) => setPassword(event.currentTarget.value)}
-          placeholder="Password"
+          placeholder={t.auth.password}
           type="password"
           value={password}
         />
         <button disabled={isSubmitting} type="button" onClick={() => void submit()}>
           {isSubmitting
-            ? "Working..."
+            ? t.auth.working
             : mode === "signin"
-              ? "Sign in"
-              : "Create account"}
+              ? t.auth.signIn
+              : t.auth.createAccount}
         </button>
         <button
           className="text-button"
           type="button"
           onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
         >
-          {mode === "signin" ? "Need an account?" : "Already have an account?"}
+          {mode === "signin" ? t.auth.needAccount : t.auth.switchToSignIn}
         </button>
         {status ? <p className="auth-status">{status}</p> : null}
       </section>
-    </main>
+    </div>
+  );
+}
+
+function LanguageSwitcher({
+  label,
+  locale,
+  setLocale,
+}: {
+  label: string;
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+}) {
+  return (
+    <div aria-label={label} className="language-switcher" role="group">
+      <button
+        aria-pressed={locale === "es"}
+        className={locale === "es" ? "active" : ""}
+        type="button"
+        onClick={() => setLocale("es")}
+      >
+        ES
+      </button>
+      <button
+        aria-pressed={locale === "en"}
+        className={locale === "en" ? "active" : ""}
+        type="button"
+        onClick={() => setLocale("en")}
+      >
+        EN
+      </button>
+    </div>
+  );
+}
+
+function Icon({ name }: { name: IconName }) {
+  const paths: Record<IconName, string[]> = {
+    chevronLeft: ["M15 18l-6-6 6-6"],
+    cloud: [
+      "M17.5 19H8a5 5 0 1 1 1.1-9.88A6 6 0 0 1 20.5 12 3.5 3.5 0 0 1 17.5 19z",
+      "M12 13v6",
+      "M9.5 15.5 12 13l2.5 2.5",
+    ],
+    copy: [
+      "M8 8h10v10H8z",
+      "M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+    ],
+    logOut: [
+      "M10 17l5-5-5-5",
+      "M15 12H3",
+      "M21 19V5a2 2 0 0 0-2-2h-5",
+      "M14 21h5a2 2 0 0 0 2-2",
+    ],
+    menu: ["M4 7h16", "M4 12h16", "M4 17h16"],
+    plus: ["M12 5v14", "M5 12h14"],
+    trash: [
+      "M3 6h18",
+      "M8 6V4h8v2",
+      "M6 6l1 15h10l1-15",
+      "M10 11v6",
+      "M14 11v6",
+    ],
+    user: [
+      "M20 21a8 8 0 0 0-16 0",
+      "M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10z",
+    ],
+  };
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="icon"
+      fill="none"
+      focusable="false"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      {paths[name].map((path) => (
+        <path d={path} key={path} />
+      ))}
+    </svg>
   );
 }
 
