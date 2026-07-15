@@ -248,6 +248,11 @@ input {
   white-space: nowrap;
 }
 
+.drawing-row span.untitled {
+  color: #9aa3af;
+  font-style: italic;
+}
+
 .drawing-row small,
 .account-panel span,
 .toolbar-actions span {

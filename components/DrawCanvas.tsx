@@ -373,11 +373,11 @@ function DrawWorkspace({
   const closeAuthPrompt = useCallback(() => setAuthPromptMode(null), []);
 
   const loadFreeDrawing = useCallback(() => {
-    const drawing = loadLocalDrawing(t.terms.untitledDrawing);
+    const drawing = loadLocalDrawing("");
     setDrawings([drawing]);
     setActiveId(drawing.id);
     setStatus(t.status.savedLocally);
-  }, [t.status.savedLocally, t.terms.untitledDrawing]);
+  }, [t.status.savedLocally]);
 
   const loadDrawings = useCallback(async (drawingToImport?: Drawing | null) => {
     setStatus(t.status.loading);
@@ -467,7 +467,7 @@ function DrawWorkspace({
     try {
       const drawing = await pb.collection("drawings").create<Drawing>({
         owner: user.id,
-        title: t.terms.untitledDrawing,
+        title: "",
         scene: emptyScene(),
       });
 
@@ -482,7 +482,6 @@ function DrawWorkspace({
     t.status.couldNotCreate,
     t.status.created,
     t.status.creating,
-    t.terms.untitledDrawing,
     t.status.accountRequiredForMore,
     openAuthPrompt,
     user,
@@ -490,7 +489,7 @@ function DrawWorkspace({
 
   const renameDrawing = useCallback(
     async (drawing: Drawing, title: string) => {
-      const nextTitle = title.trim() || t.terms.untitledDrawing;
+      const nextTitle = title.trim();
       const nextDrawing = { ...drawing, title: nextTitle, updated: new Date().toISOString() };
 
       setDrawings((items) =>
@@ -518,7 +517,6 @@ function DrawWorkspace({
       t.status.couldNotRename,
       t.status.renamed,
       t.status.savedLocally,
-      t.terms.untitledDrawing,
       user,
     ],
   );
@@ -526,7 +524,7 @@ function DrawWorkspace({
   const deleteDrawing = useCallback(
     async (drawing: Drawing) => {
       if (!user) {
-        const nextDrawing = createLocalDrawing(t.terms.untitledDrawing);
+        const nextDrawing = createLocalDrawing("");
         saveLocalDrawing(nextDrawing);
         localDraftToImport.current = null;
         setDrawings([nextDrawing]);
@@ -547,7 +545,7 @@ function DrawWorkspace({
         setStatus(error instanceof Error ? error.message : t.status.couldNotDelete);
       }
     },
-    [pb, t.status.couldNotDelete, t.status.deleted, t.status.savedLocally, t.terms.untitledDrawing, user],
+    [pb, t.status.couldNotDelete, t.status.deleted, t.status.savedLocally, user],
   );
 
   const duplicateDrawing = useCallback(
@@ -560,7 +558,9 @@ function DrawWorkspace({
       try {
         const duplicate = await pb.collection("drawings").create<Drawing>({
           owner: user.id,
-          title: `${drawing.title} ${t.terms.copySuffix}`,
+          title: drawing.title.trim()
+            ? `${drawing.title} ${t.terms.copySuffix}`
+            : `${t.terms.untitledDrawing} ${t.terms.copySuffix}`,
           scene: drawing.scene,
         });
 
@@ -698,7 +698,9 @@ function DrawWorkspace({
                   type="button"
                   onClick={() => setActiveId(drawing.id)}
                 >
-                  <span>{drawing.title}</span>
+                  <span className={drawing.title.trim() ? "" : "untitled"}>
+                    {drawing.title.trim() || t.terms.untitledDrawing}
+                  </span>
                   <small>{formatTime(drawing.updated, locale)}</small>
                 </button>
               ))}
@@ -747,6 +749,7 @@ function DrawWorkspace({
                 aria-label={t.labels.title}
                 defaultValue={activeDrawing.title}
                 key={activeDrawing.id}
+                placeholder={t.terms.untitledDrawing}
                 onBlur={(event) =>
                   void renameDrawing(activeDrawing, event.currentTarget.value)
                 }

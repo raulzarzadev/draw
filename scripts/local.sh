@@ -8,17 +8,17 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v npm >/dev/null 2>&1; then
-  echo "npm is required. Install Node.js with npm and run this again." >&2
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pnpm is required. Install pnpm (https://pnpm.io) and run this again." >&2
   exit 1
 fi
 
 if [ ! -d node_modules ]; then
-  npm install
+  pnpm install
 fi
 
 host="${HOST:-127.0.0.1}"
 port="${PORT:-5173}"
 
 echo "Starting Draw at http://${host}:${port}"
-exec npx vite --host "$host" --port "$port"
+exec pnpm exec vite --host "$host" --port "$port"
