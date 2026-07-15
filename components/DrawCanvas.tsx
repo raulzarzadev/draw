@@ -65,6 +65,33 @@ const getEmail = (user: AuthModel) => {
   return String(user.email ?? "");
 };
 
+const hasPocketBaseCode = (error: unknown, field: string, code: string) => {
+  if (!error || typeof error !== "object" || !("data" in error)) {
+    return false;
+  }
+
+  const data = (error as { data?: { data?: Record<string, { code?: string }> } })
+    .data?.data;
+
+  return data?.[field]?.code === code;
+};
+
+const getAuthErrorMessage = (error: unknown, mode: "signin" | "signup") => {
+  if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
+    return "That email already has an account. Sign in instead.";
+  }
+
+  if (mode === "signin") {
+    return "Email or password is incorrect.";
+  }
+
+  if (error instanceof Error && error.message !== "Failed to create record.") {
+    return error.message;
+  }
+
+  return "Could not create the account. Check the email and password.";
+};
+
 export default function DrawCanvas() {
   const pb = useMemo(() => new PocketBaseClient(pocketBaseUrl), []);
 
@@ -451,26 +478,45 @@ function AuthPanel({ pb }: { pb: PocketBase }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const submit = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !password) {
+      setStatus("Enter email and password.");
+      return;
+    }
+
+    if (password.length < 8) {
+      setStatus("Password must be at least 8 characters.");
+      return;
+    }
+
+    setIsSubmitting(true);
     setStatus("Working...");
 
     try {
       if (mode === "signin") {
-        await pb.collection("users").authWithPassword(email, password);
+        await pb.collection("users").authWithPassword(normalizedEmail, password);
         setStatus("Signed in");
         return;
       }
 
       await pb.collection("users").create({
-        email,
+        email: normalizedEmail,
         password,
         passwordConfirm: password,
       });
-      await pb.collection("users").authWithPassword(email, password);
+      await pb.collection("users").authWithPassword(normalizedEmail, password);
       setStatus("Account created");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Auth failed");
+      if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
+        setMode("signin");
+      }
+      setStatus(getAuthErrorMessage(error, mode));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -493,8 +539,12 @@ function AuthPanel({ pb }: { pb: PocketBase }) {
           type="password"
           value={password}
         />
-        <button type="button" onClick={() => void submit()}>
-          {mode === "signin" ? "Sign in" : "Create account"}
+        <button disabled={isSubmitting} type="button" onClick={() => void submit()}>
+          {isSubmitting
+            ? "Working..."
+            : mode === "signin"
+              ? "Sign in"
+              : "Create account"}
         </button>
         <button
           className="text-button"
