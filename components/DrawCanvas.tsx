@@ -423,7 +423,7 @@ function DrawWorkspace({
 
   useEffect(() => {
     if (user) {
-      setAuthPromptMode(null);
+      setAuthPromptOpen(false);
       void loadDrawings(localDraftToImport.current);
       return;
     }
