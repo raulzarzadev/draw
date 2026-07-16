@@ -225,20 +225,59 @@ input {
 }
 
 .drawing-row {
-  display: grid;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   width: 100%;
   min-height: 58px;
-  justify-items: start;
-  gap: 4px;
-  border-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  padding: 9px 10px;
-  text-align: left;
+  padding-right: 6px;
+}
+
+.drawing-row:hover {
+  background: #f0f3f7;
 }
 
 .drawing-row.active {
   border-color: #c8d3e5;
   background: #eef4ff;
+}
+
+.drawing-row-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  justify-items: start;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.drawing-row-main:hover {
+  background: transparent;
+}
+
+.drawing-row-actions {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.drawing-row-actions .icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.drawing-row-actions .icon-button:hover {
+  border-color: #d7dbe2;
+  background: #ffffff;
 }
 
 .drawing-row span {

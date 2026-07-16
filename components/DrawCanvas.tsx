@@ -9,13 +9,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Locale = "es" | "en";
 type IconName =
   | "chevronLeft"
+  | "chevronRight"
   | "cloud"
   | "copy"
   | "logOut"
   | "menu"
   | "plus"
   | "trash"
-  | "user";
+  | "user"
+  | "x";
 
 type SceneData = {
   type?: string;
@@ -34,7 +36,6 @@ type Drawing = {
   updated: string;
 };
 
-type AuthMode = "signin" | "signup";
 
 type ExcalidrawModule = {
   Excalidraw: ComponentType<{
@@ -125,22 +126,22 @@ const translations = {
   es: {
     appName: "Draw",
     auth: {
-      accountCreated: "Cuenta creada",
+      changeEmail: "Cambiar correo",
       checkingSession: "Revisando sesion...",
       cloudPrompt:
-        "Crea una cuenta gratis para guardar en la nube y tener mas pizarras.",
+        "Escribe tu correo y te enviamos un codigo para entrar. Sin contrasenas.",
+      code: "Codigo",
+      codeRequired: "Escribe el codigo.",
+      codeSentTo: "Codigo enviado a",
       createAccount: "Crear cuenta",
       email: "Correo",
-      emailExists: "Ese correo ya tiene cuenta. Inicia sesion.",
-      emailPasswordRequired: "Escribe correo y contrasena.",
-      incorrectLogin: "Correo o contrasena incorrectos.",
-      needAccount: "Necesitas cuenta?",
-      password: "Contrasena",
-      passwordMin: "La contrasena debe tener al menos 8 caracteres.",
+      emailRequired: "Escribe tu correo.",
+      invalidCode: "Codigo invalido o expirado.",
+      resendCode: "Reenviar codigo",
+      sendCode: "Enviar codigo",
+      sendError: "No se pudo enviar el codigo. Intenta mas tarde.",
       signIn: "Iniciar sesion",
       signedIn: "Sesion iniciada",
-      submitError: "No se pudo crear la cuenta. Revisa el correo y contrasena.",
-      switchToSignIn: "Ya tienes cuenta?",
       working: "Procesando...",
     },
     labels: {
@@ -190,22 +191,22 @@ const translations = {
   en: {
     appName: "Draw",
     auth: {
-      accountCreated: "Account created",
+      changeEmail: "Change email",
       checkingSession: "Checking session...",
       cloudPrompt:
-        "Create a free account to save to the cloud and keep more boards.",
+        "Enter your email and we'll send you a code to sign in. No passwords.",
+      code: "Code",
+      codeRequired: "Enter the code.",
+      codeSentTo: "Code sent to",
       createAccount: "Create account",
       email: "Email",
-      emailExists: "That email already has an account. Sign in instead.",
-      emailPasswordRequired: "Enter email and password.",
-      incorrectLogin: "Email or password is incorrect.",
-      needAccount: "Need an account?",
-      password: "Password",
-      passwordMin: "Password must be at least 8 characters.",
+      emailRequired: "Enter your email.",
+      invalidCode: "Invalid or expired code.",
+      resendCode: "Resend code",
+      sendCode: "Send code",
+      sendError: "Could not send the code. Try again later.",
       signIn: "Sign in",
       signedIn: "Signed in",
-      submitError: "Could not create the account. Check the email and password.",
-      switchToSignIn: "Already have an account?",
       working: "Working...",
     },
     labels: {
@@ -276,37 +277,10 @@ const getEmail = (user: AuthModel) => {
   return String(user.email ?? "");
 };
 
-const hasPocketBaseCode = (error: unknown, field: string, code: string) => {
-  if (!error || typeof error !== "object" || !("data" in error)) {
-    return false;
-  }
-
-  const data = (error as { data?: { data?: Record<string, { code?: string }> } })
-    .data?.data;
-
-  return data?.[field]?.code === code;
-};
-
-const getAuthErrorMessage = (
-  error: unknown,
-  mode: "signin" | "signup",
-  locale: Locale,
-) => {
-  const t = translations[locale].auth;
-
-  if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
-    return t.emailExists;
-  }
-
-  if (mode === "signin") {
-    return t.incorrectLogin;
-  }
-
-  if (error instanceof Error && error.message !== "Failed to create record.") {
-    return error.message;
-  }
-
-  return t.submitError;
+const generateRandomPassword = () => {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 export default function DrawCanvas() {
@@ -337,7 +311,7 @@ function DrawWorkspace({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [status, setStatus] = useState(t.status.ready);
-  const [authPromptMode, setAuthPromptMode] = useState<AuthMode | null>(null);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
   const localDraftToImport = useRef<Drawing | null>(null);
@@ -357,12 +331,12 @@ function DrawWorkspace({
   );
 
   const openAuthPrompt = useCallback(
-    (mode: AuthMode, message?: string, importCurrentDrawing = false) => {
+    (message?: string, importCurrentDrawing = false) => {
       if (importCurrentDrawing && !user && activeDrawing) {
         localDraftToImport.current = activeDrawing;
       }
 
-      setAuthPromptMode(mode);
+      setAuthPromptOpen(true);
       if (message) {
         setStatus(message);
       }
@@ -370,7 +344,7 @@ function DrawWorkspace({
     [activeDrawing, user],
   );
 
-  const closeAuthPrompt = useCallback(() => setAuthPromptMode(null), []);
+  const closeAuthPrompt = useCallback(() => setAuthPromptOpen(false), []);
 
   const loadFreeDrawing = useCallback(() => {
     const drawing = loadLocalDrawing("");
@@ -458,7 +432,7 @@ function DrawWorkspace({
 
   const createDrawing = useCallback(async () => {
     if (!user) {
-      openAuthPrompt("signup", t.status.accountRequiredForMore, true);
+      openAuthPrompt(t.status.accountRequiredForMore, true);
       return;
     }
 
@@ -551,7 +525,7 @@ function DrawWorkspace({
   const duplicateDrawing = useCallback(
     async (drawing: Drawing) => {
       if (!user) {
-        openAuthPrompt("signup", t.status.accountRequiredForMore, true);
+        openAuthPrompt(t.status.accountRequiredForMore, true);
         return;
       }
 
@@ -671,7 +645,7 @@ function DrawWorkspace({
             type="button"
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
           >
-            <Icon name={sidebarCollapsed ? "menu" : "chevronLeft"} />
+            <Icon name={sidebarCollapsed ? "chevronRight" : "chevronLeft"} />
           </button>
           <div className="sidebar-title">
             <p className="eyebrow">{t.appName}</p>
@@ -692,17 +666,41 @@ function DrawWorkspace({
           <>
             <div className="drawing-list">
               {drawings.map((drawing) => (
-                <button
+                <div
                   className={`drawing-row ${drawing.id === activeId ? "active" : ""}`}
                   key={drawing.id}
-                  type="button"
-                  onClick={() => setActiveId(drawing.id)}
                 >
-                  <span className={drawing.title.trim() ? "" : "untitled"}>
-                    {drawing.title.trim() || t.terms.untitledDrawing}
-                  </span>
-                  <small>{formatTime(drawing.updated, locale)}</small>
-                </button>
+                  <button
+                    className="drawing-row-main"
+                    type="button"
+                    onClick={() => setActiveId(drawing.id)}
+                  >
+                    <span className={drawing.title.trim() ? "" : "untitled"}>
+                      {drawing.title.trim() || t.terms.untitledDrawing}
+                    </span>
+                    <small>{formatTime(drawing.updated, locale)}</small>
+                  </button>
+                  <div className="drawing-row-actions">
+                    <button
+                      aria-label={t.labels.duplicate}
+                      className="icon-button"
+                      title={t.labels.duplicate}
+                      type="button"
+                      onClick={() => void duplicateDrawing(drawing)}
+                    >
+                      <Icon name="copy" />
+                    </button>
+                    <button
+                      aria-label={t.labels.delete}
+                      className="icon-button danger"
+                      title={t.labels.delete}
+                      type="button"
+                      onClick={() => void deleteDrawing(drawing)}
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
 
@@ -728,7 +726,7 @@ function DrawWorkspace({
                   <button
                     className="icon-text-button"
                     type="button"
-                    onClick={() => openAuthPrompt("signup", undefined, true)}
+                    onClick={() => openAuthPrompt(undefined, true)}
                   >
                     <Icon name="user" />
                     <span>{t.auth.createAccount}</span>
@@ -762,33 +760,13 @@ function DrawWorkspace({
                     title={t.labels.cloudSave}
                     type="button"
                     onClick={() =>
-                      openAuthPrompt("signup", t.status.accountRequiredForCloud, true)
+                      openAuthPrompt(t.status.accountRequiredForCloud, true)
                     }
                   >
                     <Icon name="cloud" />
                     <span>{t.labels.cloudSave}</span>
                   </button>
                 ) : null}
-                <button
-                  aria-label={t.labels.duplicate}
-                  className="icon-text-button"
-                  title={t.labels.duplicate}
-                  type="button"
-                  onClick={() => void duplicateDrawing(activeDrawing)}
-                >
-                  <Icon name="copy" />
-                  <span>{t.labels.duplicate}</span>
-                </button>
-                <button
-                  aria-label={t.labels.delete}
-                  className="icon-text-button danger"
-                  title={t.labels.delete}
-                  type="button"
-                  onClick={() => void deleteDrawing(activeDrawing)}
-                >
-                  <Icon name="trash" />
-                  <span>{t.labels.delete}</span>
-                </button>
                 <span>{status}</span>
               </div>
             </div>
@@ -809,9 +787,8 @@ function DrawWorkspace({
           </div>
         )}
       </section>
-      {authPromptMode ? (
+      {authPromptOpen ? (
         <AuthPanel
-          initialMode={authPromptMode}
           locale={locale}
           pb={pb}
           setLocale={setLocale}
@@ -901,35 +878,29 @@ function DrawingEditor({
 }
 
 function AuthPanel({
-  initialMode = "signin",
   locale,
   onClose,
   pb,
   setLocale,
 }: {
-  initialMode?: AuthMode;
   locale: Locale;
   onClose?: () => void;
   pb: PocketBase;
   setLocale: (locale: Locale) => void;
 }) {
   const t = translations[locale];
-  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [otpId, setOtpId] = useState("");
+  const [code, setCode] = useState("");
   const [status, setStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const submit = async () => {
+  const sendCode = async () => {
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (!normalizedEmail || !password) {
-      setStatus(t.auth.emailPasswordRequired);
-      return;
-    }
-
-    if (password.length < 8) {
-      setStatus(t.auth.passwordMin);
+    if (!normalizedEmail) {
+      setStatus(t.auth.emailRequired);
       return;
     }
 
@@ -937,24 +908,47 @@ function AuthPanel({
     setStatus(t.auth.working);
 
     try {
-      if (mode === "signin") {
-        await pb.collection("users").authWithPassword(normalizedEmail, password);
-        setStatus(t.auth.signedIn);
-        return;
+      let result;
+
+      try {
+        result = await pb.collection("users").requestOTP(normalizedEmail);
+      } catch {
+        const password = generateRandomPassword();
+        await pb.collection("users").create({
+          email: normalizedEmail,
+          password,
+          passwordConfirm: password,
+        });
+        result = await pb.collection("users").requestOTP(normalizedEmail);
       }
 
-      await pb.collection("users").create({
-        email: normalizedEmail,
-        password,
-        passwordConfirm: password,
-      });
-      await pb.collection("users").authWithPassword(normalizedEmail, password);
-      setStatus(t.auth.accountCreated);
-    } catch (error) {
-      if (hasPocketBaseCode(error, "email", "validation_not_unique")) {
-        setMode("signin");
-      }
-      setStatus(getAuthErrorMessage(error, mode, locale));
+      setOtpId(result.otpId);
+      setCode("");
+      setStep("code");
+      setStatus(`${t.auth.codeSentTo} ${normalizedEmail}`);
+    } catch {
+      setStatus(t.auth.sendError);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const verifyCode = async () => {
+    const trimmedCode = code.trim();
+
+    if (!trimmedCode) {
+      setStatus(t.auth.codeRequired);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatus(t.auth.working);
+
+    try {
+      await pb.collection("users").authWithOTP(otpId, trimmedCode);
+      setStatus(t.auth.signedIn);
+    } catch {
+      setStatus(t.auth.invalidCode);
     } finally {
       setIsSubmitting(false);
     }
@@ -966,14 +960,16 @@ function AuthPanel({
         <div className="auth-header">
           <div>
             <p className="eyebrow">{t.appName}</p>
-            <h1>{mode === "signin" ? t.auth.signIn : t.auth.createAccount}</h1>
+            <h1>{t.auth.signIn}</h1>
           </div>
           <div className="auth-header-actions">
-            <LanguageSwitcher
-              label={t.labels.language}
-              locale={locale}
-              setLocale={setLocale}
-            />
+            {!onClose ? (
+              <LanguageSwitcher
+                label={t.labels.language}
+                locale={locale}
+                setLocale={setLocale}
+              />
+            ) : null}
             {onClose ? (
               <button
                 aria-label={t.labels.close}
@@ -982,40 +978,73 @@ function AuthPanel({
                 type="button"
                 onClick={onClose}
               >
-                <Icon name="chevronLeft" />
+                <Icon name="x" />
               </button>
             ) : null}
           </div>
         </div>
-        <p className="auth-description">{t.auth.cloudPrompt}</p>
-        <input
-          autoComplete="email"
-          onChange={(event) => setEmail(event.currentTarget.value)}
-          placeholder={t.auth.email}
-          type="email"
-          value={email}
-        />
-        <input
-          autoComplete={mode === "signin" ? "current-password" : "new-password"}
-          onChange={(event) => setPassword(event.currentTarget.value)}
-          placeholder={t.auth.password}
-          type="password"
-          value={password}
-        />
-        <button disabled={isSubmitting} type="button" onClick={() => void submit()}>
-          {isSubmitting
-            ? t.auth.working
-            : mode === "signin"
-              ? t.auth.signIn
-              : t.auth.createAccount}
-        </button>
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-        >
-          {mode === "signin" ? t.auth.needAccount : t.auth.switchToSignIn}
-        </button>
+        {step === "email" ? (
+          <>
+            <p className="auth-description">{t.auth.cloudPrompt}</p>
+            <input
+              autoComplete="email"
+              onChange={(event) => setEmail(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void sendCode();
+                }
+              }}
+              placeholder={t.auth.email}
+              type="email"
+              value={email}
+            />
+            <button disabled={isSubmitting} type="button" onClick={() => void sendCode()}>
+              {isSubmitting ? t.auth.working : t.auth.sendCode}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="auth-description">{`${t.auth.codeSentTo} ${email.trim().toLowerCase()}`}</p>
+            <input
+              autoComplete="one-time-code"
+              autoFocus
+              inputMode="numeric"
+              onChange={(event) => setCode(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void verifyCode();
+                }
+              }}
+              placeholder={t.auth.code}
+              type="text"
+              value={code}
+            />
+            <button disabled={isSubmitting} type="button" onClick={() => void verifyCode()}>
+              {isSubmitting ? t.auth.working : t.auth.signIn}
+            </button>
+            <button
+              className="text-button"
+              disabled={isSubmitting}
+              type="button"
+              onClick={() => void sendCode()}
+            >
+              {t.auth.resendCode}
+            </button>
+            <button
+              className="text-button"
+              disabled={isSubmitting}
+              type="button"
+              onClick={() => {
+                setStep("email");
+                setOtpId("");
+                setCode("");
+                setStatus("");
+              }}
+            >
+              {t.auth.changeEmail}
+            </button>
+          </>
+        )}
         {status ? <p className="auth-status">{status}</p> : null}
       </section>
     </div>
@@ -1056,6 +1085,7 @@ function LanguageSwitcher({
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, string[]> = {
     chevronLeft: ["M15 18l-6-6 6-6"],
+    chevronRight: ["M9 18l6-6-6-6"],
     cloud: [
       "M17.5 19H8a5 5 0 1 1 1.1-9.88A6 6 0 0 1 20.5 12 3.5 3.5 0 0 1 17.5 19z",
       "M12 13v6",
@@ -1084,6 +1114,7 @@ function Icon({ name }: { name: IconName }) {
       "M20 21a8 8 0 0 0-16 0",
       "M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10z",
     ],
+    x: ["M18 6 6 18", "M6 6l12 12"],
   };
 
   return (
