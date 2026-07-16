@@ -54,7 +54,25 @@ type AdminDrawing = {
   updated: string;
 };
 
+type DrawingLimitRecord = {
+  id: string;
+  owner: string;
+  maxDrawings: number;
+  created: string;
+  updated: string;
+};
+
+type DrawSetting = {
+  id: string;
+  key: string;
+  value: number;
+  created: string;
+  updated: string;
+};
+
 type AdminUserRow = AdminUser & {
+  drawingLimit: string;
+  drawingLimitRecordId: string;
   drawingCount: number;
   lastDrawingAt: string;
 };
@@ -85,9 +103,39 @@ const adminEmails = String(
   .filter(Boolean);
 const localDrawingId = "local-free-drawing";
 const localDrawingStorageKey = "draw-local-drawing";
+const defaultRegisteredDrawingLimit = 3;
+const drawingLimitSettingKey = "defaultRegisteredDrawingLimit";
 
 const titleForStorage = (title: string, fallback: string) =>
   title.trim() || fallback;
+
+const normalizeDrawingLimit = (value: unknown, fallback = defaultRegisteredDrawingLimit) => {
+  const nextValue = Number(value);
+
+  if (!Number.isFinite(nextValue)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(999, Math.trunc(nextValue)));
+};
+
+const emptyLimitValue = (value: string) => value.trim() === "";
+
+const getDrawingLimitForUser = async (pb: PocketBase, userId: string) => {
+  const [settings, userLimits] = await Promise.all([
+    pb.collection("draw_settings").getFullList<DrawSetting>({
+      filter: `key = "${drawingLimitSettingKey}"`,
+      fields: "id,key,value",
+    }),
+    pb.collection("drawing_limits").getFullList<DrawingLimitRecord>({
+      filter: `owner = "${userId}"`,
+      fields: "id,owner,maxDrawings",
+    }),
+  ]);
+
+  const defaultLimit = normalizeDrawingLimit(settings[0]?.value);
+  return normalizeDrawingLimit(userLimits[0]?.maxDrawings, defaultLimit);
+};
 
 const emptyScene = (): SceneData => ({
   type: "excalidraw",
@@ -191,8 +239,10 @@ const translations = {
       title: "Titulo del dibujo",
     },
     admin: {
+      defaultDrawingLimit: "Max pizarras por usuario registrado",
       drawings: "Pizarras",
       lastActivity: "Ultima actividad",
+      limit: "Limite",
       noUsers: "Aun no hay usuarios",
       open: "Panel admin",
       refresh: "Actualizar",
@@ -221,6 +271,7 @@ const translations = {
       creating: "Creando...",
       deleted: "Eliminado",
       duplicated: "Duplicado",
+      drawingLimitReached: "Limite de pizarras alcanzado.",
       loading: "Cargando dibujos...",
       noDrawings: "Aun no hay dibujos",
       ready: "Listo",
@@ -271,8 +322,10 @@ const translations = {
       title: "Drawing title",
     },
     admin: {
+      defaultDrawingLimit: "Max boards per registered user",
       drawings: "Boards",
       lastActivity: "Last activity",
+      limit: "Limit",
       noUsers: "No users yet",
       open: "Admin panel",
       refresh: "Refresh",
@@ -301,6 +354,7 @@ const translations = {
       creating: "Creating...",
       deleted: "Deleted",
       duplicated: "Duplicated",
+      drawingLimitReached: "Board limit reached.",
       loading: "Loading drawings...",
       noDrawings: "No drawings yet",
       ready: "Ready",
@@ -375,6 +429,7 @@ function DrawWorkspace({
   const [status, setStatus] = useState(t.status.ready);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
   const localDraftToImport = useRef<Drawing | null>(null);
@@ -426,8 +481,11 @@ function DrawWorkspace({
         sort: "-updated",
         fields: "id,title,scene,created,updated",
       });
+      const nextDrawingLimit = user
+        ? await getDrawingLimitForUser(pb, user.id)
+        : defaultRegisteredDrawingLimit;
       const importedDrawing =
-        drawingToImport && user
+        drawingToImport && user && nextDrawings.length < nextDrawingLimit
           ? await pb.collection("drawings").create<Drawing>({
               owner: user.id,
               title: titleForStorage(drawingToImport.title, t.terms.untitledDrawing),
@@ -441,11 +499,14 @@ function DrawWorkspace({
       if (importedDrawing) {
         localDraftToImport.current = null;
       }
+      setDrawingLimit(nextDrawingLimit);
       setDrawings(allDrawings);
       setActiveId((current) => current ?? allDrawings[0]?.id ?? null);
       setStatus(
         importedDrawing
           ? t.status.saved
+          : drawingToImport && user && nextDrawings.length >= nextDrawingLimit
+            ? t.status.drawingLimitReached
           : allDrawings.length
             ? t.status.ready
             : t.status.createFirst,
@@ -457,6 +518,7 @@ function DrawWorkspace({
     pb,
     t.status.couldNotLoad,
     t.status.createFirst,
+    t.status.drawingLimitReached,
     t.status.loading,
     t.status.ready,
     t.status.saved,
@@ -502,6 +564,11 @@ function DrawWorkspace({
       return;
     }
 
+    if (drawings.length >= drawingLimit) {
+      setStatus(t.status.drawingLimitReached);
+      return;
+    }
+
     setStatus(t.status.creating);
 
     try {
@@ -522,9 +589,12 @@ function DrawWorkspace({
     t.status.couldNotCreate,
     t.status.created,
     t.status.creating,
+    t.status.drawingLimitReached,
     t.status.accountRequiredForMore,
     t.terms.untitledDrawing,
     openAuthPrompt,
+    drawingLimit,
+    drawings.length,
     user,
   ]);
 
@@ -597,6 +667,11 @@ function DrawWorkspace({
         return;
       }
 
+      if (drawings.length >= drawingLimit) {
+        setStatus(t.status.drawingLimitReached);
+        return;
+      }
+
       try {
         const duplicate = await pb.collection("drawings").create<Drawing>({
           owner: user.id,
@@ -618,7 +693,10 @@ function DrawWorkspace({
       t.status.accountRequiredForMore,
       t.status.couldNotDuplicate,
       t.status.duplicated,
+      t.status.drawingLimitReached,
       t.terms.copySuffix,
+      drawingLimit,
+      drawings.length,
       openAuthPrompt,
       user,
     ],
@@ -1150,16 +1228,21 @@ function AdminPanel({
 }) {
   const t = translations[locale];
   const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [defaultLimitInput, setDefaultLimitInput] = useState(
+    String(defaultRegisteredDrawingLimit),
+  );
+  const [defaultLimitRecordId, setDefaultLimitRecordId] = useState("");
   const [totalDrawings, setTotalDrawings] = useState(0);
   const [status, setStatus] = useState(t.status.loading);
   const [isLoading, setIsLoading] = useState(false);
+  const [savingLimitKey, setSavingLimitKey] = useState("");
 
   const loadAdminData = useCallback(async () => {
     setIsLoading(true);
     setStatus(t.status.loading);
 
     try {
-      const [nextUsers, nextDrawings] = await Promise.all([
+      const [nextUsers, nextDrawings, settings, drawingLimits] = await Promise.all([
         pb.collection("users").getFullList<AdminUser>({
           sort: "-created",
           fields: "id,email,verified,created,updated",
@@ -1168,9 +1251,20 @@ function AdminPanel({
           sort: "-updated",
           fields: "id,title,owner,created,updated",
         }),
+        pb.collection("draw_settings").getFullList<DrawSetting>({
+          filter: `key = "${drawingLimitSettingKey}"`,
+          fields: "id,key,value",
+        }),
+        pb.collection("drawing_limits").getFullList<DrawingLimitRecord>({
+          fields: "id,owner,maxDrawings",
+        }),
       ]);
 
       const counts = new Map<string, { count: number; lastDrawingAt: string }>();
+      const limitByOwner = new Map(
+        drawingLimits.map((limit) => [limit.owner, limit]),
+      );
+      const defaultLimit = normalizeDrawingLimit(settings[0]?.value);
 
       for (const drawing of nextDrawings) {
         const current = counts.get(drawing.owner) ?? { count: 0, lastDrawingAt: "" };
@@ -1186,13 +1280,18 @@ function AdminPanel({
       setUsers(
         nextUsers.map((nextUser) => {
           const userStats = counts.get(nextUser.id);
+          const userLimit = limitByOwner.get(nextUser.id);
           return {
             ...nextUser,
+            drawingLimit: userLimit ? String(normalizeDrawingLimit(userLimit.maxDrawings)) : "",
+            drawingLimitRecordId: userLimit?.id ?? "",
             drawingCount: userStats?.count ?? 0,
             lastDrawingAt: userStats?.lastDrawingAt ?? "",
           };
         }),
       );
+      setDefaultLimitInput(String(defaultLimit));
+      setDefaultLimitRecordId(settings[0]?.id ?? "");
       setTotalDrawings(nextDrawings.length);
       setStatus(t.status.ready);
     } catch (error) {
@@ -1205,6 +1304,88 @@ function AdminPanel({
   useEffect(() => {
     void loadAdminData();
   }, [loadAdminData]);
+
+  const saveDefaultLimit = useCallback(async () => {
+    const nextLimit = normalizeDrawingLimit(defaultLimitInput);
+    setDefaultLimitInput(String(nextLimit));
+    setSavingLimitKey("default");
+
+    try {
+      const payload = { key: drawingLimitSettingKey, value: nextLimit };
+      const setting = defaultLimitRecordId
+        ? await pb.collection("draw_settings").update<DrawSetting>(
+            defaultLimitRecordId,
+            payload,
+          )
+        : await pb.collection("draw_settings").create<DrawSetting>(payload);
+
+      setDefaultLimitRecordId(setting.id);
+      setStatus(t.status.saved);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
+    } finally {
+      setSavingLimitKey("");
+    }
+  }, [defaultLimitInput, defaultLimitRecordId, pb, t.status.couldNotSave, t.status.saved]);
+
+  const updateUserLimitInput = useCallback((userId: string, value: string) => {
+    setUsers((items) =>
+      items.map((item) =>
+        item.id === userId ? { ...item, drawingLimit: value } : item,
+      ),
+    );
+  }, []);
+
+  const saveUserLimit = useCallback(
+    async (adminUser: AdminUserRow) => {
+      const key = `user-${adminUser.id}`;
+      setSavingLimitKey(key);
+
+      try {
+        if (emptyLimitValue(adminUser.drawingLimit)) {
+          if (adminUser.drawingLimitRecordId) {
+            await pb.collection("drawing_limits").delete(adminUser.drawingLimitRecordId);
+          }
+          setUsers((items) =>
+            items.map((item) =>
+              item.id === adminUser.id
+                ? { ...item, drawingLimit: "", drawingLimitRecordId: "" }
+                : item,
+            ),
+          );
+          setStatus(t.status.saved);
+          return;
+        }
+
+        const nextLimit = normalizeDrawingLimit(adminUser.drawingLimit);
+        const payload = { owner: adminUser.id, maxDrawings: nextLimit };
+        const savedLimit = adminUser.drawingLimitRecordId
+          ? await pb.collection("drawing_limits").update<DrawingLimitRecord>(
+              adminUser.drawingLimitRecordId,
+              payload,
+            )
+          : await pb.collection("drawing_limits").create<DrawingLimitRecord>(payload);
+
+        setUsers((items) =>
+          items.map((item) =>
+            item.id === adminUser.id
+              ? {
+                  ...item,
+                  drawingLimit: String(nextLimit),
+                  drawingLimitRecordId: savedLimit.id,
+                }
+              : item,
+          ),
+        );
+        setStatus(t.status.saved);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
+      } finally {
+        setSavingLimitKey("");
+      }
+    },
+    [pb, t.status.couldNotSave, t.status.saved],
+  );
 
   return (
     <div className="auth-shell auth-modal">
@@ -1247,6 +1428,25 @@ function AdminPanel({
           </div>
         </div>
 
+        <label className="admin-default-limit">
+          <span>{t.admin.defaultDrawingLimit}</span>
+          <input
+            disabled={savingLimitKey === "default"}
+            inputMode="numeric"
+            min="1"
+            max="999"
+            type="number"
+            value={defaultLimitInput}
+            onBlur={() => void saveDefaultLimit()}
+            onChange={(event) => setDefaultLimitInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        </label>
+
         <p className="admin-status">{status}</p>
 
         <div className="admin-table-wrap">
@@ -1255,6 +1455,7 @@ function AdminPanel({
               <tr>
                 <th>{t.admin.user}</th>
                 <th>{t.admin.drawings}</th>
+                <th>{t.admin.limit}</th>
                 <th>{t.admin.lastActivity}</th>
               </tr>
             </thead>
@@ -1267,6 +1468,28 @@ function AdminPanel({
                     </td>
                     <td>{adminUser.drawingCount}</td>
                     <td>
+                      <input
+                        aria-label={`${t.admin.limit} ${adminUser.email}`}
+                        className="admin-limit-input"
+                        disabled={savingLimitKey === `user-${adminUser.id}`}
+                        inputMode="numeric"
+                        min="1"
+                        max="999"
+                        placeholder={defaultLimitInput}
+                        type="number"
+                        value={adminUser.drawingLimit}
+                        onBlur={() => void saveUserLimit(adminUser)}
+                        onChange={(event) =>
+                          updateUserLimitInput(adminUser.id, event.target.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                    </td>
+                    <td>
                       {adminUser.lastDrawingAt
                         ? formatTime(adminUser.lastDrawingAt, locale)
                         : t.admin.unknown}
@@ -1275,7 +1498,7 @@ function AdminPanel({
                 ))
               ) : (
                 <tr>
-                  <td colSpan={3}>{t.admin.noUsers}</td>
+                  <td colSpan={4}>{t.admin.noUsers}</td>
                 </tr>
               )}
             </tbody>

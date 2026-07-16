@@ -152,7 +152,7 @@ input {
   display: grid;
   width: min(860px, calc(100vw - 28px));
   max-height: min(720px, calc(100vh - 28px));
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   gap: 14px;
   border: 1px solid #dfe3e8;
   border-radius: 8px;
@@ -209,6 +209,36 @@ input {
   line-height: 1;
 }
 
+.admin-default-limit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-default-limit input,
+.admin-limit-input {
+  width: 72px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  padding: 7px 8px;
+}
+
+.admin-default-limit input:focus,
+.admin-limit-input:focus {
+  outline: 2px solid #111827;
+  outline-offset: 1px;
+}
+
+.admin-limit-input {
+  text-align: right;
+}
+
 .admin-status {
   margin: 0;
 }
@@ -245,6 +275,12 @@ input {
 .admin-table td:nth-child(2),
 .admin-table th:nth-child(2) {
   width: 96px;
+  text-align: right;
+}
+
+.admin-table td:nth-child(3),
+.admin-table th:nth-child(3) {
+  width: 92px;
   text-align: right;
 }
 
@@ -661,7 +697,12 @@ input {
   }
 
   .admin-table {
-    min-width: 560px;
+    min-width: 660px;
+  }
+
+  .admin-default-limit {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
