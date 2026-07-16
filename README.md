@@ -34,6 +34,24 @@ To point at another PocketBase instance, copy `.env.example` to `.env.local` and
 
 ```bash
 VITE_POCKETBASE_URL=https://your-pocketbase.example.com
+VITE_ADMIN_EMAILS=admin@example.com
+```
+
+`VITE_ADMIN_EMAILS` is a comma-separated list of emails that can see the in-app
+admin panel.
+
+## PocketBase Migrations
+
+PocketBase collection rules live in:
+
+```text
+pocketbase/migrations
+```
+
+Copy those files into your PocketBase `pb_migrations` folder and run:
+
+```bash
+pocketbase migrate up --dir=/path/to/pb_data --migrationsDir=/path/to/pb_migrations
 ```
 
 ## Scripts

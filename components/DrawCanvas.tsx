@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Locale = "es" | "en";
 type IconName =
+  | "barChart"
   | "chevronLeft"
   | "chevronRight"
   | "cloud"
@@ -32,8 +33,30 @@ type Drawing = {
   id: string;
   title: string;
   scene: SceneData;
+  owner?: string;
   created: string;
   updated: string;
+};
+
+type AdminUser = {
+  id: string;
+  email: string;
+  verified?: boolean;
+  created: string;
+  updated: string;
+};
+
+type AdminDrawing = {
+  id: string;
+  title: string;
+  owner: string;
+  created: string;
+  updated: string;
+};
+
+type AdminUserRow = AdminUser & {
+  drawingCount: number;
+  lastDrawingAt: string;
 };
 
 
@@ -54,6 +77,12 @@ type ExcalidrawModule = {
 
 const pocketBaseUrl =
   import.meta.env.VITE_POCKETBASE_URL ?? "https://pb.raulzarza.com";
+const adminEmails = String(
+  import.meta.env.VITE_ADMIN_EMAILS ?? "raulzarza.dev@gmail.com",
+)
+  .split(",")
+  .map((email) => email.trim().toLowerCase())
+  .filter(Boolean);
 const localDrawingId = "local-free-drawing";
 const localDrawingStorageKey = "draw-local-drawing";
 
@@ -148,6 +177,7 @@ const translations = {
       working: "Procesando...",
     },
     labels: {
+      admin: "Admin",
       cloudSave: "Guardar en nube",
       close: "Cerrar",
       createDrawing: "Crear dibujo",
@@ -159,6 +189,20 @@ const translations = {
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
       title: "Titulo del dibujo",
+    },
+    admin: {
+      drawings: "Pizarras",
+      lastActivity: "Ultima actividad",
+      noUsers: "Aun no hay usuarios",
+      open: "Panel admin",
+      refresh: "Actualizar",
+      title: "Panel admin",
+      totalDrawings: "Pizarras totales",
+      totalUsers: "Usuarios",
+      unknown: "Sin actividad",
+      user: "Usuario",
+      usersError:
+        "No pude cargar usuarios. Revisa las reglas admin de PocketBase.",
     },
     status: {
       accountRequiredForCloud:
@@ -213,6 +257,7 @@ const translations = {
       working: "Working...",
     },
     labels: {
+      admin: "Admin",
       cloudSave: "Save to cloud",
       close: "Close",
       createDrawing: "Create drawing",
@@ -224,6 +269,20 @@ const translations = {
       showDrawings: "Show drawings",
       signOut: "Sign out",
       title: "Drawing title",
+    },
+    admin: {
+      drawings: "Boards",
+      lastActivity: "Last activity",
+      noUsers: "No users yet",
+      open: "Admin panel",
+      refresh: "Refresh",
+      title: "Admin panel",
+      totalDrawings: "Total boards",
+      totalUsers: "Users",
+      unknown: "No activity",
+      user: "User",
+      usersError:
+        "Could not load users. Check the PocketBase admin rules.",
     },
     status: {
       accountRequiredForCloud:
@@ -315,10 +374,12 @@ function DrawWorkspace({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [status, setStatus] = useState(t.status.ready);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
   const localDraftToImport = useRef<Drawing | null>(null);
   const isCloudAccount = !!user;
+  const isAdmin = adminEmails.includes(getEmail(user).toLowerCase());
 
   useEffect(() => {
     setStatus((current) =>
@@ -719,15 +780,28 @@ function DrawWorkspace({
                   setLocale={setLocale}
                 />
                 {user ? (
-                  <button
-                    aria-label={t.labels.signOut}
-                    className="icon-button"
-                    title={t.labels.signOut}
-                    type="button"
-                    onClick={() => pb.authStore.clear()}
-                  >
-                    <Icon name="logOut" />
-                  </button>
+                  <>
+                    {isAdmin ? (
+                      <button
+                        aria-label={t.admin.open}
+                        className="icon-button"
+                        title={t.admin.open}
+                        type="button"
+                        onClick={() => setAdminPanelOpen(true)}
+                      >
+                        <Icon name="barChart" />
+                      </button>
+                    ) : null}
+                    <button
+                      aria-label={t.labels.signOut}
+                      className="icon-button"
+                      title={t.labels.signOut}
+                      type="button"
+                      onClick={() => pb.authStore.clear()}
+                    >
+                      <Icon name="logOut" />
+                    </button>
+                  </>
                 ) : (
                   <button
                     className="icon-text-button"
@@ -799,6 +873,13 @@ function DrawWorkspace({
           pb={pb}
           setLocale={setLocale}
           onClose={closeAuthPrompt}
+        />
+      ) : null}
+      {adminPanelOpen && isAdmin ? (
+        <AdminPanel
+          locale={locale}
+          pb={pb}
+          onClose={() => setAdminPanelOpen(false)}
         />
       ) : null}
     </main>
@@ -1057,6 +1138,153 @@ function AuthPanel({
   );
 }
 
+function AdminPanel({
+  locale,
+  onClose,
+  pb,
+}: {
+  locale: Locale;
+  onClose: () => void;
+  pb: PocketBase;
+}) {
+  const t = translations[locale];
+  const [users, setUsers] = useState<AdminUserRow[]>([]);
+  const [totalDrawings, setTotalDrawings] = useState(0);
+  const [status, setStatus] = useState(t.status.loading);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const loadAdminData = useCallback(async () => {
+    setIsLoading(true);
+    setStatus(t.status.loading);
+
+    try {
+      const [nextUsers, nextDrawings] = await Promise.all([
+        pb.collection("users").getFullList<AdminUser>({
+          sort: "-created",
+          fields: "id,email,verified,created,updated",
+        }),
+        pb.collection("drawings").getFullList<AdminDrawing>({
+          sort: "-updated",
+          fields: "id,title,owner,created,updated",
+        }),
+      ]);
+
+      const counts = new Map<string, { count: number; lastDrawingAt: string }>();
+
+      for (const drawing of nextDrawings) {
+        const current = counts.get(drawing.owner) ?? { count: 0, lastDrawingAt: "" };
+        counts.set(drawing.owner, {
+          count: current.count + 1,
+          lastDrawingAt:
+            !current.lastDrawingAt || drawing.updated > current.lastDrawingAt
+              ? drawing.updated
+              : current.lastDrawingAt,
+        });
+      }
+
+      setUsers(
+        nextUsers.map((nextUser) => {
+          const userStats = counts.get(nextUser.id);
+          return {
+            ...nextUser,
+            drawingCount: userStats?.count ?? 0,
+            lastDrawingAt: userStats?.lastDrawingAt ?? "",
+          };
+        }),
+      );
+      setTotalDrawings(nextDrawings.length);
+      setStatus(t.status.ready);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.admin.usersError);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [pb, t.admin.usersError, t.status.loading, t.status.ready]);
+
+  useEffect(() => {
+    void loadAdminData();
+  }, [loadAdminData]);
+
+  return (
+    <div className="auth-shell auth-modal">
+      <section className="admin-panel">
+        <div className="admin-header">
+          <div>
+            <p className="eyebrow">{t.appName}</p>
+            <h1>{t.admin.title}</h1>
+          </div>
+          <div className="admin-header-actions">
+            <button
+              className="icon-text-button"
+              disabled={isLoading}
+              type="button"
+              onClick={() => void loadAdminData()}
+            >
+              <Icon name="barChart" />
+              <span>{t.admin.refresh}</span>
+            </button>
+            <button
+              aria-label={t.labels.close}
+              className="icon-button"
+              title={t.labels.close}
+              type="button"
+              onClick={onClose}
+            >
+              <Icon name="x" />
+            </button>
+          </div>
+        </div>
+
+        <div className="admin-stats">
+          <div>
+            <span>{t.admin.totalUsers}</span>
+            <strong>{users.length}</strong>
+          </div>
+          <div>
+            <span>{t.admin.totalDrawings}</span>
+            <strong>{totalDrawings}</strong>
+          </div>
+        </div>
+
+        <p className="admin-status">{status}</p>
+
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>{t.admin.user}</th>
+                <th>{t.admin.drawings}</th>
+                <th>{t.admin.lastActivity}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length ? (
+                users.map((adminUser) => (
+                  <tr key={adminUser.id}>
+                    <td>
+                      <span>{adminUser.email}</span>
+                    </td>
+                    <td>{adminUser.drawingCount}</td>
+                    <td>
+                      {adminUser.lastDrawingAt
+                        ? formatTime(adminUser.lastDrawingAt, locale)
+                        : t.admin.unknown}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={3}>{t.admin.noUsers}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function LanguageSwitcher({
   label,
   locale,
@@ -1090,6 +1318,13 @@ function LanguageSwitcher({
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, string[]> = {
+    barChart: [
+      "M4 19V5",
+      "M4 19h16",
+      "M8 16v-5",
+      "M12 16V8",
+      "M16 16v-8",
+    ],
     chevronLeft: ["M15 18l-6-6 6-6"],
     chevronRight: ["M9 18l6-6-6-6"],
     cloud: [
