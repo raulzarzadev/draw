@@ -57,6 +57,9 @@ const pocketBaseUrl =
 const localDrawingId = "local-free-drawing";
 const localDrawingStorageKey = "draw-local-drawing";
 
+const titleForStorage = (title: string, fallback: string) =>
+  title.trim() || fallback;
+
 const emptyScene = (): SceneData => ({
   type: "excalidraw",
   version: 2,
@@ -365,7 +368,7 @@ function DrawWorkspace({
         drawingToImport && user
           ? await pb.collection("drawings").create<Drawing>({
               owner: user.id,
-              title: drawingToImport.title,
+              title: titleForStorage(drawingToImport.title, t.terms.untitledDrawing),
               scene: drawingToImport.scene,
             })
           : null;
@@ -395,6 +398,7 @@ function DrawWorkspace({
     t.status.loading,
     t.status.ready,
     t.status.saved,
+    t.terms.untitledDrawing,
     user,
   ]);
 
@@ -441,7 +445,7 @@ function DrawWorkspace({
     try {
       const drawing = await pb.collection("drawings").create<Drawing>({
         owner: user.id,
-        title: "",
+        title: t.terms.untitledDrawing,
         scene: emptyScene(),
       });
 
@@ -457,13 +461,14 @@ function DrawWorkspace({
     t.status.created,
     t.status.creating,
     t.status.accountRequiredForMore,
+    t.terms.untitledDrawing,
     openAuthPrompt,
     user,
   ]);
 
   const renameDrawing = useCallback(
     async (drawing: Drawing, title: string) => {
-      const nextTitle = title.trim();
+      const nextTitle = titleForStorage(title, t.terms.untitledDrawing);
       const nextDrawing = { ...drawing, title: nextTitle, updated: new Date().toISOString() };
 
       setDrawings((items) =>
@@ -491,6 +496,7 @@ function DrawWorkspace({
       t.status.couldNotRename,
       t.status.renamed,
       t.status.savedLocally,
+      t.terms.untitledDrawing,
       user,
     ],
   );
