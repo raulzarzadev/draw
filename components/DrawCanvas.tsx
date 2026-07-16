@@ -422,6 +422,7 @@ function DrawWorkspace({
 
     try {
       const nextDrawings = await pb.collection("drawings").getFullList<Drawing>({
+        filter: `owner = "${user?.id ?? ""}"`,
         sort: "-updated",
         fields: "id,title,scene,created,updated",
       });
