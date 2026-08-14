@@ -7,6 +7,8 @@ import type { ComponentType } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Locale = "es" | "en";
+type ShareMode = "restricted" | "view" | "edit";
+type DrawingAccess = "owner" | "view" | "edit";
 type IconName =
   | "barChart"
   | "chevronLeft"
@@ -16,6 +18,7 @@ type IconName =
   | "logOut"
   | "menu"
   | "plus"
+  | "share"
   | "trash"
   | "user"
   | "x";
@@ -31,9 +34,11 @@ type SceneData = {
 
 type Drawing = {
   id: string;
+  owner: string;
   title: string;
   scene: SceneData;
-  owner?: string;
+  share_mode: ShareMode;
+  share_token: string;
   created: string;
   updated: string;
 };
@@ -77,13 +82,18 @@ type AdminUserRow = AdminUser & {
   lastDrawingAt: string;
 };
 
+type SharedDrawingLink = {
+  drawingId: string;
+  token: string;
+};
 
 type ExcalidrawModule = {
   Excalidraw: ComponentType<{
     initialData: SceneData;
     langCode?: string;
-    onChange: (elements: unknown[], appState: unknown, files: unknown) => void;
+    onChange?: (elements: unknown[], appState: unknown, files: unknown) => void;
     UIOptions: Record<string, unknown>;
+    viewModeEnabled?: boolean;
   }>;
   serializeAsJSON: (
     elements: unknown[],
@@ -153,8 +163,11 @@ const createLocalDrawing = (title: string): Drawing => {
 
   return {
     id: localDrawingId,
+    owner: "",
     title,
     scene: emptyScene(),
+    share_mode: "restricted",
+    share_token: "",
     created: now,
     updated: now,
   };
@@ -176,6 +189,38 @@ const isDrawing = (value: unknown): value is Drawing => {
   );
 };
 
+const normalizeDrawing = (drawing: Drawing): Drawing => ({
+  ...drawing,
+  owner: drawing.owner ?? "",
+  share_mode: drawing.share_mode ?? "restricted",
+  share_token: drawing.share_token ?? "",
+});
+
+const readSharedDrawingLink = (): SharedDrawingLink | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const drawingId = params.get("drawing")?.trim() ?? "";
+  const token = params.get("share")?.trim() ?? "";
+
+  return drawingId && token ? { drawingId, token } : null;
+};
+
+const createShareToken = () => {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const buildShareUrl = (drawingId: string, token: string) => {
+  const url = new URL(window.location.origin);
+  url.searchParams.set("drawing", drawingId);
+  url.searchParams.set("share", token);
+  return url.toString();
+};
+
 const loadLocalDrawing = (title: string): Drawing => {
   if (typeof window === "undefined") {
     return createLocalDrawing(title);
@@ -189,7 +234,9 @@ const loadLocalDrawing = (title: string): Drawing => {
 
   try {
     const parsed = JSON.parse(rawDrawing) as unknown;
-    return isDrawing(parsed) ? { ...parsed, id: localDrawingId } : createLocalDrawing(title);
+    return isDrawing(parsed)
+      ? normalizeDrawing({ ...parsed, id: localDrawingId })
+      : createLocalDrawing(title);
   } catch {
     return createLocalDrawing(title);
   }
@@ -236,6 +283,7 @@ const translations = {
       language: "Idioma",
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
+      share: "Compartir",
       title: "Titulo del dibujo",
     },
     admin: {
@@ -266,6 +314,7 @@ const translations = {
       couldNotLoad: "No se pudieron cargar los dibujos",
       couldNotRename: "No se pudo renombrar",
       couldNotSave: "No se pudo guardar",
+      couldNotShare: "No se pudo actualizar el acceso. Intenta de nuevo.",
       createFirst: "Crea tu primer dibujo",
       created: "Creado",
       creating: "Creando...",
@@ -284,6 +333,21 @@ const translations = {
       copySuffix: "copia",
       myDrawings: "Mis dibujos",
       untitledDrawing: "Dibujo sin titulo",
+    },
+    share: {
+      access: "Acceso general",
+      copyLink: "Copiar enlace",
+      copied: "Enlace copiado",
+      description: "Elige qué puede hacer cualquier persona que tenga este enlace.",
+      edit: "Puede editar",
+      editDescription: "Puede cambiar el título y el contenido del dibujo.",
+      linkLabel: "Enlace para compartir",
+      readOnly: "Solo lectura",
+      restricted: "Restringido",
+      restrictedDescription: "Solo tú puedes abrir este dibujo.",
+      title: "Compartir dibujo",
+      view: "Puede ver",
+      viewDescription: "Puede abrir el dibujo, pero no modificarlo.",
     },
   },
   en: {
@@ -319,6 +383,7 @@ const translations = {
       language: "Language",
       showDrawings: "Show drawings",
       signOut: "Sign out",
+      share: "Share",
       title: "Drawing title",
     },
     admin: {
@@ -349,6 +414,7 @@ const translations = {
       couldNotLoad: "Could not load drawings",
       couldNotRename: "Could not rename",
       couldNotSave: "Could not save",
+      couldNotShare: "Could not update access. Try again.",
       createFirst: "Create your first drawing",
       created: "Created",
       creating: "Creating...",
@@ -367,6 +433,21 @@ const translations = {
       copySuffix: "copy",
       myDrawings: "My drawings",
       untitledDrawing: "Untitled drawing",
+    },
+    share: {
+      access: "General access",
+      copyLink: "Copy link",
+      copied: "Link copied",
+      description: "Choose what anyone with this link can do.",
+      edit: "Can edit",
+      editDescription: "Can change the title and drawing contents.",
+      linkLabel: "Share link",
+      readOnly: "Read only",
+      restricted: "Restricted",
+      restrictedDescription: "Only you can open this drawing.",
+      title: "Share drawing",
+      view: "Can view",
+      viewDescription: "Can open the drawing but cannot change it.",
     },
   },
 } as const;
@@ -426,15 +507,17 @@ function DrawWorkspace({
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [status, setStatus] = useState(t.status.ready);
+  const [status, setStatus] = useState<string>(t.status.ready);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
+  const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef<SceneData | null>(null);
   const localDraftToImport = useRef<Drawing | null>(null);
   const isCloudAccount = !!user;
   const isAdmin = adminEmails.includes(getEmail(user).toLowerCase());
+  const sharedLink = useMemo(readSharedDrawingLink, []);
 
   useEffect(() => {
     setStatus((current) =>
@@ -448,6 +531,14 @@ function DrawWorkspace({
     () => drawings.find((drawing) => drawing.id === activeId) ?? null,
     [activeId, drawings],
   );
+  const activeAccess: DrawingAccess = activeDrawing?.id === localDrawingId
+    ? "owner"
+    : activeDrawing?.owner && activeDrawing.owner === user?.id
+    ? "owner"
+    : activeDrawing?.share_mode === "edit"
+      ? "edit"
+      : "view";
+  const canEditActiveDrawing = activeAccess === "owner" || activeAccess === "edit";
 
   const openAuthPrompt = useCallback(
     (message?: string, importCurrentDrawing = false) => {
@@ -479,7 +570,7 @@ function DrawWorkspace({
       const nextDrawings = await pb.collection("drawings").getFullList<Drawing>({
         filter: `owner = "${user?.id ?? ""}"`,
         sort: "-updated",
-        fields: "id,title,scene,created,updated",
+        fields: "id,owner,title,scene,share_mode,share_token,created,updated",
       });
       const nextDrawingLimit = user
         ? await getDrawingLimitForUser(pb, user.id)
@@ -492,9 +583,9 @@ function DrawWorkspace({
               scene: drawingToImport.scene,
             })
           : null;
-      const allDrawings = importedDrawing
+      const allDrawings = (importedDrawing
         ? [importedDrawing, ...nextDrawings]
-        : nextDrawings;
+        : nextDrawings).map(normalizeDrawing);
 
       if (importedDrawing) {
         localDraftToImport.current = null;
@@ -526,6 +617,24 @@ function DrawWorkspace({
     user,
   ]);
 
+  const loadSharedDrawing = useCallback(async (link: SharedDrawingLink) => {
+    setStatus(t.status.loading);
+
+    try {
+      const drawing = await pb.collection("drawings").getOne<Drawing>(link.drawingId, {
+        fields: "id,owner,title,scene,share_mode,share_token,created,updated",
+        query: { share_token: link.token },
+      });
+      setDrawings([normalizeDrawing(drawing)]);
+      setActiveId(drawing.id);
+      setStatus(t.status.ready);
+    } catch (error) {
+      setDrawings([]);
+      setActiveId(null);
+      setStatus(error instanceof Error ? error.message : t.status.couldNotLoad);
+    }
+  }, [pb, t.status.couldNotLoad, t.status.loading, t.status.ready]);
+
   useEffect(() => {
     const unsubscribe = pb.authStore.onChange(
       () => {
@@ -550,13 +659,18 @@ function DrawWorkspace({
   }, []);
 
   useEffect(() => {
+    if (sharedLink) {
+      void loadSharedDrawing(sharedLink);
+      return;
+    }
+
     if (user) {
       setAuthPromptOpen(false);
       void loadDrawings(localDraftToImport.current);
       return;
     }
     loadFreeDrawing();
-  }, [loadDrawings, loadFreeDrawing, user]);
+  }, [loadDrawings, loadFreeDrawing, loadSharedDrawing, sharedLink, user]);
 
   const createDrawing = useCallback(async () => {
     if (!user) {
@@ -578,7 +692,7 @@ function DrawWorkspace({
         scene: emptyScene(),
       });
 
-      setDrawings((items) => [drawing, ...items]);
+      setDrawings((items) => [normalizeDrawing(drawing), ...items]);
       setActiveId(drawing.id);
       setStatus(t.status.created);
     } catch (error) {
@@ -600,6 +714,9 @@ function DrawWorkspace({
 
   const renameDrawing = useCallback(
     async (drawing: Drawing, title: string) => {
+      if (!canEditActiveDrawing) {
+        return;
+      }
       const nextTitle = titleForStorage(title, t.terms.untitledDrawing);
       const nextDrawing = { ...drawing, title: nextTitle, updated: new Date().toISOString() };
 
@@ -609,7 +726,7 @@ function DrawWorkspace({
         ),
       );
 
-      if (!user) {
+      if (!user && !sharedLink) {
         localDraftToImport.current = nextDrawing;
         saveLocalDrawing(nextDrawing);
         setStatus(t.status.savedLocally);
@@ -617,7 +734,11 @@ function DrawWorkspace({
       }
 
       try {
-        await pb.collection("drawings").update(drawing.id, { title: nextTitle });
+        await pb.collection("drawings").update(
+          drawing.id,
+          { title: nextTitle },
+          sharedLink ? { query: { share_token: sharedLink.token } } : undefined,
+        );
         setStatus(t.status.renamed);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : t.status.couldNotRename);
@@ -630,6 +751,8 @@ function DrawWorkspace({
       t.status.savedLocally,
       t.terms.untitledDrawing,
       user,
+      canEditActiveDrawing,
+      sharedLink,
     ],
   );
 
@@ -681,7 +804,7 @@ function DrawWorkspace({
           scene: drawing.scene,
         });
 
-        setDrawings((items) => [duplicate, ...items]);
+        setDrawings((items) => [normalizeDrawing(duplicate), ...items]);
         setActiveId(duplicate.id);
         setStatus(t.status.duplicated);
       } catch (error) {
@@ -704,7 +827,10 @@ function DrawWorkspace({
 
   const saveScene = useCallback(
     async (drawingId: string, scene: SceneData) => {
-      if (!user) {
+      if (!canEditActiveDrawing) {
+        return;
+      }
+      if (!user && !sharedLink) {
         const updated = new Date().toISOString();
         let nextDrawing: Drawing | null = null;
 
@@ -732,7 +858,10 @@ function DrawWorkspace({
       try {
         const updated = await pb
           .collection("drawings")
-          .update<Pick<Drawing, "updated">>(drawingId, { scene }, { fields: "updated" });
+          .update<Pick<Drawing, "updated">>(drawingId, { scene }, {
+            fields: "updated",
+            query: sharedLink ? { share_token: sharedLink.token } : undefined,
+          });
 
         setDrawings((items) =>
           items.map((item) =>
@@ -744,8 +873,43 @@ function DrawWorkspace({
         setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
       }
     },
-    [pb, t.status.couldNotSave, t.status.saved, t.status.savedLocally, t.status.saving, user],
+    [
+      pb,
+      t.status.couldNotSave,
+      t.status.saved,
+      t.status.savedLocally,
+      t.status.saving,
+      user,
+      canEditActiveDrawing,
+      sharedLink,
+    ],
   );
+
+  const updateSharing = useCallback(async (mode: ShareMode) => {
+    if (!activeDrawing || activeAccess !== "owner") {
+      return;
+    }
+
+    const token = mode === "restricted"
+      ? ""
+      : activeDrawing.share_token || createShareToken();
+
+    try {
+      const updated = await pb.collection("drawings").update<Drawing>(activeDrawing.id, {
+        share_mode: mode,
+        share_token: token,
+      }, {
+        fields: "id,owner,title,scene,share_mode,share_token,created,updated",
+      });
+      setDrawings((items) => items.map((item) => (
+        item.id === activeDrawing.id ? normalizeDrawing(updated) : item
+      )));
+      setStatus(t.status.saved);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.status.couldNotShare);
+      throw error;
+    }
+  }, [activeAccess, activeDrawing, pb, t.status.couldNotShare, t.status.saved]);
 
   const scheduleSave = useCallback(
     (scene: SceneData) => {
@@ -795,17 +959,19 @@ function DrawWorkspace({
           </button>
           <div className="sidebar-title">
             <p className="eyebrow">{t.appName}</p>
-            <h1>{t.terms.myDrawings}</h1>
+            <h1>{sharedLink ? t.share.title : t.terms.myDrawings}</h1>
           </div>
-          <button
-            aria-label={t.labels.createDrawing}
-            className="icon-button"
-            title={t.labels.createDrawing}
-            type="button"
-            onClick={createDrawing}
-          >
-            <Icon name="plus" />
-          </button>
+          {!sharedLink ? (
+            <button
+              aria-label={t.labels.createDrawing}
+              className="icon-button"
+              title={t.labels.createDrawing}
+              type="button"
+              onClick={createDrawing}
+            >
+              <Icon name="plus" />
+            </button>
+          ) : null}
         </div>
 
         {!sidebarCollapsed ? (
@@ -826,7 +992,8 @@ function DrawWorkspace({
                     </span>
                     <small>{formatTime(drawing.updated, locale)}</small>
                   </button>
-                  <div className="drawing-row-actions">
+                  {activeAccess === "owner" && !sharedLink ? (
+                    <div className="drawing-row-actions">
                     <button
                       aria-label={t.labels.duplicate}
                       className="icon-button"
@@ -845,7 +1012,8 @@ function DrawWorkspace({
                     >
                       <Icon name="trash" />
                     </button>
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -907,12 +1075,13 @@ function DrawWorkspace({
                 defaultValue={activeDrawing.title}
                 key={activeDrawing.id}
                 placeholder={t.terms.untitledDrawing}
+                readOnly={!canEditActiveDrawing}
                 onBlur={(event) =>
                   void renameDrawing(activeDrawing, event.currentTarget.value)
                 }
               />
               <div className="toolbar-actions">
-                {!isCloudAccount ? (
+                {!isCloudAccount && !sharedLink ? (
                   <button
                     aria-label={t.labels.cloudSave}
                     className="icon-text-button primary"
@@ -926,6 +1095,20 @@ function DrawWorkspace({
                     <span>{t.labels.cloudSave}</span>
                   </button>
                 ) : null}
+                {isCloudAccount && activeAccess === "owner" ? (
+                  <button
+                    className="icon-text-button"
+                    type="button"
+                    onClick={() => setSharePanelOpen(true)}
+                  >
+                    <Icon name="share" />
+                    <span>{t.labels.share}</span>
+                  </button>
+                ) : sharedLink ? (
+                  <span className="access-badge">
+                    {activeAccess === "edit" ? t.share.edit : t.share.readOnly}
+                  </span>
+                ) : null}
                 <span>{status}</span>
               </div>
             </div>
@@ -933,6 +1116,7 @@ function DrawWorkspace({
               key={activeDrawing.id}
               drawing={activeDrawing}
               locale={locale}
+              readOnly={!canEditActiveDrawing}
               scheduleSave={scheduleSave}
             />
           </>
@@ -961,6 +1145,14 @@ function DrawWorkspace({
           onClose={() => setAdminPanelOpen(false)}
         />
       ) : null}
+      {sharePanelOpen && activeDrawing && activeAccess === "owner" ? (
+        <SharePanel
+          drawing={activeDrawing}
+          locale={locale}
+          onClose={() => setSharePanelOpen(false)}
+          updateSharing={updateSharing}
+        />
+      ) : null}
     </main>
   );
 }
@@ -968,10 +1160,12 @@ function DrawWorkspace({
 function DrawingEditor({
   drawing,
   locale,
+  readOnly,
   scheduleSave,
 }: {
   drawing: Drawing;
   locale: Locale;
+  readOnly: boolean;
   scheduleSave: (scene: SceneData) => void;
 }) {
   const [module, setModule] = useState<ExcalidrawModule | null>(null);
@@ -1024,10 +1218,11 @@ function DrawingEditor({
       <Excalidraw
         initialData={drawing.scene}
         langCode={locale === "es" ? "es-ES" : "en"}
-        onChange={(elements, appState, files) => {
+        onChange={readOnly ? undefined : (elements, appState, files) => {
           const serialized = serializeAsJSON(elements, appState, files, "local");
           scheduleSave(JSON.parse(serialized) as SceneData);
         }}
+        viewModeEnabled={readOnly}
         UIOptions={{
           canvasActions: {
             changeViewBackgroundColor: true,
@@ -1233,7 +1428,7 @@ function AdminPanel({
   );
   const [defaultLimitRecordId, setDefaultLimitRecordId] = useState("");
   const [totalDrawings, setTotalDrawings] = useState(0);
-  const [status, setStatus] = useState(t.status.loading);
+  const [status, setStatus] = useState<string>(t.status.loading);
   const [isLoading, setIsLoading] = useState(false);
   const [savingLimitKey, setSavingLimitKey] = useState("");
 
@@ -1509,6 +1704,118 @@ function AdminPanel({
   );
 }
 
+function SharePanel({
+  drawing,
+  locale,
+  onClose,
+  updateSharing,
+}: {
+  drawing: Drawing;
+  locale: Locale;
+  onClose: () => void;
+  updateSharing: (mode: ShareMode) => Promise<void>;
+}) {
+  const t = translations[locale];
+  const [mode, setMode] = useState<ShareMode>(drawing.share_mode);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const link = mode === "restricted" || !drawing.share_token
+    ? ""
+    : buildShareUrl(drawing.id, drawing.share_token);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  const changeMode = async (nextMode: ShareMode) => {
+    setMode(nextMode);
+    setIsSaving(true);
+    setMessage("");
+    try {
+      await updateSharing(nextMode);
+    } catch {
+      setMode(drawing.share_mode);
+      setMessage(t.status.couldNotShare);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const copyLink = async () => {
+    if (!link) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      setMessage(t.share.copied);
+    } catch {
+      setMessage(t.status.couldNotShare);
+    }
+  };
+
+  const description = mode === "edit"
+    ? t.share.editDescription
+    : mode === "view"
+      ? t.share.viewDescription
+      : t.share.restrictedDescription;
+
+  return (
+    <div className="share-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) {
+        onClose();
+      }
+    }}>
+      <section aria-labelledby="share-title" aria-modal="true" className="share-panel" role="dialog">
+        <header className="share-header">
+          <div>
+            <p className="eyebrow">{t.labels.share}</p>
+            <h2 id="share-title">{t.share.title}</h2>
+          </div>
+          <button
+            aria-label={t.labels.close}
+            className="icon-button"
+            title={t.labels.close}
+            type="button"
+            onClick={onClose}
+          >
+            <Icon name="x" />
+          </button>
+        </header>
+        <p className="share-description">{t.share.description}</p>
+        <label htmlFor="share-mode">{t.share.access}</label>
+        <select
+          autoFocus
+          disabled={isSaving}
+          id="share-mode"
+          value={mode}
+          onChange={(event) => void changeMode(event.currentTarget.value as ShareMode)}
+        >
+          <option value="restricted">{t.share.restricted}</option>
+          <option value="view">{t.share.view}</option>
+          <option value="edit">{t.share.edit}</option>
+        </select>
+        <p className="share-mode-description">{description}</p>
+        {link ? (
+          <div className="share-link-row">
+            <label className="sr-only" htmlFor="share-link">{t.share.linkLabel}</label>
+            <input id="share-link" readOnly value={link} onFocus={(event) => event.currentTarget.select()} />
+            <button className="primary" type="button" onClick={() => void copyLink()}>
+              {t.share.copyLink}
+            </button>
+          </div>
+        ) : null}
+        <p aria-live="polite" className="share-status">{isSaving ? t.status.saving : message}</p>
+      </section>
+    </div>
+  );
+}
+
 function LanguageSwitcher({
   label,
   locale,
@@ -1568,6 +1875,11 @@ function Icon({ name }: { name: IconName }) {
     ],
     menu: ["M4 7h16", "M4 12h16", "M4 17h16"],
     plus: ["M12 5v14", "M5 12h14"],
+    share: [
+      "M12 3v12",
+      "M8 7l4-4 4 4",
+      "M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6",
+    ],
     trash: [
       "M3 6h18",
       "M8 6V4h8v2",

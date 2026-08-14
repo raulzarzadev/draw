@@ -64,3 +64,7 @@ npm run start
 ```
 
 `npm run local` is the convenience script for local testing. `npm run build` writes the static app to `dist/client`.
+
+## Sharing
+
+The Share button supports restricted, view-only, and editable links. Before enabling it in production, add the sharing fields and access rules described in [docs/pocketbase-sharing.md](docs/pocketbase-sharing.md) to the PocketBase `drawings` collection.
