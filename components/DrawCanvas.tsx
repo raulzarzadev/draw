@@ -501,6 +501,9 @@ function DrawWorkspace({
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const mobileMenuRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const [status, setStatus] = useState<string>(t.status.ready);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
@@ -645,7 +648,10 @@ function DrawWorkspace({
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 700px)");
-    const syncSidebar = () => setSidebarCollapsed(mediaQuery.matches);
+    const syncSidebar = () => {
+      setIsMobile(mediaQuery.matches);
+      setSidebarCollapsed(mediaQuery.matches);
+    };
 
     syncSidebar();
     mediaQuery.addEventListener("change", syncSidebar);
@@ -665,6 +671,31 @@ function DrawWorkspace({
     }
     loadFreeDrawing();
   }, [loadDrawings, loadFreeDrawing, loadSharedDrawing, sharedLink, user]);
+
+  useEffect(() => {
+    if (!isMobile || sidebarCollapsed || authPromptOpen || adminPanelOpen || sharePanelOpen) return;
+    const panel = sidebarRef.current;
+    panel?.querySelector<HTMLButtonElement>("button")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarCollapsed(true);
+      if (event.key !== "Tab" || !panel) return;
+      const controls = panel.querySelectorAll<HTMLElement>('button, input, select, [tabindex="0"]');
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      mobileMenuRef.current?.focus();
+    };
+  }, [isMobile, sidebarCollapsed, authPromptOpen, adminPanelOpen, sharePanelOpen]);
 
   const createDrawing = useCallback(async () => {
     if (!user) {
@@ -688,6 +719,7 @@ function DrawWorkspace({
 
       setDrawings((items) => [normalizeDrawing(drawing), ...items]);
       setActiveId(drawing.id);
+      if (window.matchMedia("(max-width: 700px)").matches) setSidebarCollapsed(true);
       setStatus(t.status.created);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : t.status.couldNotCreate);
@@ -940,7 +972,14 @@ function DrawWorkspace({
 
   return (
     <main className={`draw-workspace ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className="draw-sidebar">
+      {isMobile && !sidebarCollapsed ? (
+        <button className="sidebar-backdrop" aria-label={t.labels.hideDrawings}
+          tabIndex={-1} onClick={() => setSidebarCollapsed(true)} />
+      ) : null}
+      <aside className="draw-sidebar" id="drawing-navigation" ref={sidebarRef}
+        aria-label={t.terms.myDrawings}
+        role={isMobile && !sidebarCollapsed ? "dialog" : undefined}
+        aria-modal={isMobile && !sidebarCollapsed ? true : undefined}>
         <div className="sidebar-header">
           <button
             aria-label={sidebarCollapsed ? t.labels.showDrawings : t.labels.hideDrawings}
@@ -979,7 +1018,10 @@ function DrawWorkspace({
                   <button
                     className="drawing-row-main"
                     type="button"
-                    onClick={() => setActiveId(drawing.id)}
+                    onClick={() => {
+                      setActiveId(drawing.id);
+                      if (isMobile) setSidebarCollapsed(true);
+                    }}
                   >
                     <span className={drawing.title.trim() ? "" : "untitled"}>
                       {drawing.title.trim() || t.terms.untitledDrawing}
@@ -1060,7 +1102,18 @@ function DrawWorkspace({
         ) : null}
       </aside>
 
-      <section className="canvas-column">
+      <section className="canvas-column" inert={isMobile && !sidebarCollapsed}>
+        <div className="mobile-workspace-header">
+          <button ref={mobileMenuRef} className="icon-button" type="button"
+            aria-label={t.labels.showDrawings} aria-expanded={!sidebarCollapsed}
+            aria-controls="drawing-navigation" onClick={() => setSidebarCollapsed(false)}>
+            <Icon name="menu" />
+          </button>
+          <span>{t.appName}</span>
+          {!sharedLink ? <button className="icon-button" type="button"
+            aria-label={t.labels.createDrawing} title={t.labels.createDrawing}
+            onClick={createDrawing}><Icon name="plus" /></button> : null}
+        </div>
         {activeDrawing ? (
           <>
             <div className="canvas-toolbar">
