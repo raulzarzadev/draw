@@ -1021,3 +1021,39 @@ select:disabled {
     transition: none;
   }
 }
+
+/* Keep desktop navigation quiet so the canvas is the primary workspace. */
+@media (min-width: 701px) {
+  .draw-workspace { grid-template-columns: 240px minmax(0, 1fr); }
+  .draw-workspace.sidebar-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+  .draw-sidebar { background: #fcfcfd; }
+  .sidebar-header { min-height: 48px; gap: 6px; padding: 8px; }
+  .sidebar-header .eyebrow { display: none; }
+  .sidebar-header h1 { font-size: 13px; font-weight: 600; }
+  .draw-sidebar .icon-button { width: 32px; min-width: 32px; min-height: 32px; border-color: transparent; background: transparent; border-radius: 8px; }
+  .draw-sidebar .icon-button:hover { background: #eeeff3; }
+  .draw-sidebar .icon { width: 16px; height: 16px; }
+  .sidebar-collapsed .sidebar-header { gap: 8px; padding: 8px; border-bottom: 0; }
+  .drawing-rail { display: flex; flex: 1; min-height: 0; overflow-y: auto; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
+  .draw-sidebar .rail-drawing.active { background: #eeedf9; color: #514bb0; box-shadow: inset 2px 0 #655dc4; }
+  .rail-account { display: grid; justify-items: center; gap: 4px; padding: 8px 0; border-top: 1px solid #eeeff2; }
+  .drawing-list { padding: 6px; }
+  .drawing-row { min-height: 52px; padding-right: 2px; border-radius: 8px; }
+  .drawing-row.active { border-color: transparent; background: #eeedf9; }
+  .drawing-row-main { gap: 3px; padding: 9px 8px; font-size: 13px; }
+  .drawing-row small { font-size: 10px; }
+  .drawing-row-actions { gap: 0; }
+  .drawing-row-actions .icon-button { width: 26px; min-width: 26px; min-height: 28px; }
+  .account-panel { padding: 10px 12px; }
+  .account-panel > span { font-size: 11px; }
+  .language-switcher { grid-template-columns: repeat(2, 30px); }
+  .language-switcher button { min-height: 28px; font-size: 10px; padding: 0 5px; }
+  .canvas-toolbar { min-height: 48px; gap: 8px; padding: 6px 16px; border-bottom-color: #eeeff2; }
+  .canvas-toolbar input { min-width: 0; min-height: 32px; padding: 4px 6px; font-size: 13px; font-weight: 500; }
+  .toolbar-actions { gap: 10px; }
+  .toolbar-actions .icon-text-button { width: 32px; min-width: 32px; min-height: 32px; padding: 0; border-color: transparent; border-radius: 8px; }
+  .toolbar-actions .icon-text-button span { display: none; }
+  .toolbar-actions .icon { width: 16px; height: 16px; }
+  .toolbar-actions > span { max-width: 200px; font-size: 11px; }
+  .draw-sidebar button:focus-visible, .canvas-toolbar button:focus-visible { outline: 2px solid #655dc4; outline-offset: 2px; }
+}

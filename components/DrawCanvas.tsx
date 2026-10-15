@@ -661,7 +661,7 @@ function DrawWorkspace({
     const mediaQuery = window.matchMedia("(max-width: 700px)");
     const syncSidebar = () => {
       setIsMobile(mediaQuery.matches);
-      setSidebarCollapsed(mediaQuery.matches);
+      setSidebarCollapsed(true);
     };
 
     syncSidebar();
@@ -1194,6 +1194,29 @@ function DrawWorkspace({
               {!user ? <p>{t.auth.cloudPrompt}</p> : null}
             </div>
           </>
+        ) : !isMobile ? (
+          <>
+            <nav className="drawing-rail" aria-label={t.terms.myDrawings}>
+              {drawings.map((drawing) => (
+                <button key={drawing.id} className={`icon-button rail-drawing ${drawing.id === activeId ? "active" : ""}`}
+                  type="button" title={drawing.title.trim() || t.terms.untitledDrawing}
+                  aria-label={drawing.title.trim() || t.terms.untitledDrawing}
+                  aria-current={drawing.id === activeId ? "page" : undefined}
+                  onClick={() => setActiveId(drawing.id)}>
+                  <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                    <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 13h6M9 17h4" />
+                  </svg>
+                </button>
+              ))}
+            </nav>
+            <div className="rail-account">
+              {isAdmin ? <button className="icon-button" type="button" title={t.admin.open}
+                aria-label={t.admin.open} onClick={() => setAdminPanelOpen(true)}><Icon name="barChart" /></button> : null}
+              <button className="icon-button" type="button" title={user ? getEmail(user) : t.auth.createAccount}
+                aria-label={user ? getEmail(user) : t.auth.createAccount}
+                onClick={() => user ? setSidebarCollapsed(false) : openAuthPrompt(undefined, true)}><Icon name="user" /></button>
+            </div>
+          </>
         ) : null}
       </aside>
 
@@ -1239,6 +1262,8 @@ function DrawWorkspace({
                 ) : null}
                 {isCloudAccount && activeAccess === "owner" ? (
                   <button
+                    aria-label={t.labels.share}
+                    title={t.labels.share}
                     className="icon-text-button"
                     type="button"
                     onClick={() => setSharePanelOpen(true)}
