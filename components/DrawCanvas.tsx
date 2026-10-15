@@ -518,6 +518,7 @@ function DrawWorkspace({
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Drawing | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestScene = useRef(new Map<string, SceneData>());
   const savingScene = useRef(false);
@@ -743,7 +744,7 @@ function DrawWorkspace({
   }, [activeId, pb, sharedLink, user?.id]);
 
   useEffect(() => {
-    if (!isMobile || sidebarCollapsed || authPromptOpen || adminPanelOpen || sharePanelOpen) return;
+    if (!isMobile || sidebarCollapsed || authPromptOpen || adminPanelOpen || sharePanelOpen || pendingDelete) return;
     const panel = sidebarRef.current;
     panel?.querySelector<HTMLButtonElement>("button")?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -765,7 +766,7 @@ function DrawWorkspace({
       document.removeEventListener("keydown", onKeyDown);
       mobileMenuRef.current?.focus();
     };
-  }, [isMobile, sidebarCollapsed, authPromptOpen, adminPanelOpen, sharePanelOpen]);
+  }, [isMobile, sidebarCollapsed, authPromptOpen, adminPanelOpen, sharePanelOpen, pendingDelete]);
 
   const createDrawing = useCallback(async () => {
     if (!user) {
@@ -861,7 +862,7 @@ function DrawWorkspace({
         setDrawings([nextDrawing]);
         setActiveId(nextDrawing.id);
         setStatus(t.status.savedLocally);
-        return;
+        return true;
       }
 
       try {
@@ -872,8 +873,10 @@ function DrawWorkspace({
           return next;
         });
         setStatus(t.status.deleted);
+        return true;
       } catch (error) {
         setStatus(error instanceof Error ? error.message : t.status.couldNotDelete);
+        throw error;
       }
     },
     [pb, t.status.couldNotDelete, t.status.deleted, t.status.savedLocally, user],
@@ -1139,7 +1142,7 @@ function DrawWorkspace({
                       className="icon-button danger"
                       title={t.labels.delete}
                       type="button"
-                      onClick={() => void deleteDrawing(drawing)}
+                      onClick={() => setPendingDelete(drawing)}
                     >
                       <Icon name="trash" />
                     </button>
@@ -1235,6 +1238,7 @@ function DrawWorkspace({
         {activeDrawing ? (
           <>
             <div className="canvas-toolbar">
+              <div className="drawing-heading">
               <input
                 aria-label={t.labels.title}
                 defaultValue={activeDrawing.title}
@@ -1245,6 +1249,8 @@ function DrawWorkspace({
                   void renameDrawing(activeDrawing, event.currentTarget.value)
                 }
               />
+              <span className="drawing-save-status" role="status">{status}</span>
+              </div>
               <div className="toolbar-actions">
                 {!isCloudAccount && !sharedLink ? (
                   <button
@@ -1276,7 +1282,6 @@ function DrawWorkspace({
                     {activeAccess === "edit" ? t.share.edit : t.share.readOnly}
                   </span>
                 ) : null}
-                <span>{status}</span>
               </div>
             </div>
             <DrawingEditor
@@ -1299,6 +1304,9 @@ function DrawWorkspace({
           </div>
         )}
       </section>
+      {pendingDelete ? <DeleteDrawingDialog drawing={pendingDelete} locale={locale}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => deleteDrawing(pendingDelete)} /> : null}
       {authPromptOpen ? (
         <AuthPanel
           locale={locale}
@@ -2189,4 +2197,69 @@ function CenteredStatus({ title, message }: { title: string; message: string }) 
       </section>
     </main>
   );
+}
+
+function DeleteDrawingDialog({ drawing, locale, onClose, onConfirm }: {
+  drawing: Drawing;
+  locale: Locale;
+  onClose: () => void;
+  onConfirm: () => Promise<boolean>;
+}) {
+  const panelRef = useRef<HTMLElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const busyRef = useRef(false);
+  const es = locale === "es";
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    panel?.querySelector<HTMLButtonElement>("button")?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busyRef.current) onClose();
+      if (event.key !== "Tab") return;
+      const buttons = panel?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+      const first = buttons?.[0];
+      const last = buttons?.[buttons.length - 1];
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
+  }, []);
+  const confirm = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await onConfirm();
+      onClose();
+    } catch {
+      setError(es ? "No se pudo eliminar el dibujo. Inténtalo de nuevo." : "Could not delete the drawing. Try again.");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  return <div className="share-backdrop" onMouseDown={(event) => {
+    if (event.target === event.currentTarget && !busy) onClose();
+  }}>
+    <section ref={panelRef} className="share-panel delete-drawing-panel" role="alertdialog"
+      aria-modal="true" aria-labelledby="delete-drawing-title" aria-describedby="delete-drawing-description" aria-busy={busy}>
+      <div className="delete-drawing-icon"><Icon name="trash" /></div>
+      <h2 id="delete-drawing-title">{es ? "¿Eliminar dibujo?" : "Delete drawing?"}</h2>
+      <p id="delete-drawing-description">{es ? "Se eliminará" : "This will delete"} <strong>“{drawing.title.trim() || translations[locale].terms.untitledDrawing}”</strong>. {es ? "Esta acción no se puede deshacer." : "This action cannot be undone."}</p>
+      {error ? <p className="danger" role="alert">{error}</p> : null}
+      <footer className="delete-drawing-actions">
+        <button type="button" disabled={busy} onClick={onClose}>{es ? "Cancelar" : "Cancel"}</button>
+        <button type="button" className="delete-confirm" disabled={busy} onClick={() => void confirm()}>
+          {busy ? (es ? "Eliminando…" : "Deleting…") : translations[locale].labels.delete}
+        </button>
+      </footer>
+    </section>
+  </div>;
 }
