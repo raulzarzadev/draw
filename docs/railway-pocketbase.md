@@ -26,6 +26,11 @@ Set these variables on **draw-db**, never on the frontend:
 - `BREVO_SENDER_EMAIL`: sender email verified in Brevo.
 - `APP_URL=https://draw.raulzarza.com`.
 
+The configured sender is `Draw <no-reply@draw-mail.raulzarza.com>`. The
+`draw-mail.raulzarza.com` domain is authenticated in Brevo with its verification
+TXT, two DKIM CNAME records (DNS only), and a DMARC TXT record in Cloudflare.
+It is separate from the web app's `draw.raulzarza.com` CNAME.
+
 Restart/redeploy the backend after changing them. The bootstrap hook configures
 Brevo SMTP on port 587 with STARTTLS. OTP requests register missing users with a
 random inaccessible password; only successful email-code verification creates
