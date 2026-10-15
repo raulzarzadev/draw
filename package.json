@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "local": "bash scripts/local.sh",
-    "build": "vite build --outDir dist/client --emptyOutDir && node scripts/copy-hosting.mjs",
-    "start": "vite preview --host 0.0.0.0 --outDir dist/client"
+    "build": "vite build --config vite.config.ts --outDir dist/client --emptyOutDir && node scripts/copy-hosting.mjs",
+    "start": "vite preview --config vite.config.ts --host 0.0.0.0 --outDir dist/client"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.15.2",

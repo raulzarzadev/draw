@@ -4,7 +4,9 @@ import PocketBaseClient from "pocketbase";
 import type PocketBase from "pocketbase";
 import type { AuthModel } from "pocketbase";
 import type { ComponentType } from "react";
+import type { Collaborator, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { mergeScenes, sceneFingerprint } from "@draw/scene-sync";
 
 type Locale = "es" | "en";
 type ShareMode = "restricted" | "view" | "edit";
@@ -94,6 +96,9 @@ type ExcalidrawModule = {
     onChange?: (elements: unknown[], appState: unknown, files: unknown) => void;
     UIOptions: Record<string, unknown>;
     viewModeEnabled?: boolean;
+    excalidrawAPI?: (api: EditorAPI) => void;
+    isCollaborating?: boolean;
+    onPointerUpdate?: (event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void;
   }>;
   serializeAsJSON: (
     elements: unknown[],
@@ -101,7 +106,11 @@ type ExcalidrawModule = {
     files: unknown,
     localAppState: "local" | "database",
   ) => string;
+  reconcileElements: typeof import("@excalidraw/excalidraw")["reconcileElements"];
+  CaptureUpdateAction: { NEVER: "NEVER" };
 };
+
+type EditorAPI = ExcalidrawImperativeAPI;
 
 const pocketBaseUrl =
   import.meta.env.VITE_POCKETBASE_URL ?? "https://draw-db.raulzarza.com";
@@ -510,7 +519,9 @@ function DrawWorkspace({
   const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestScene = useRef<SceneData | null>(null);
+  const latestScene = useRef(new Map<string, SceneData>());
+  const savingScene = useRef(false);
+  const flushSceneRef = useRef<() => void>(() => {});
   const localDraftToImport = useRef<Drawing | null>(null);
   const isCloudAccount = !!user;
   const isAdmin = adminEmails.includes(getEmail(user).toLowerCase());
@@ -671,6 +682,65 @@ function DrawWorkspace({
     }
     loadFreeDrawing();
   }, [loadDrawings, loadFreeDrawing, loadSharedDrawing, sharedLink, user]);
+
+  useEffect(() => {
+    if (!activeId || activeId === localDrawingId || (!user && !sharedLink)) return;
+    let disposed = false;
+    const options = sharedLink ? { query: { share_token: sharedLink.token } } : {};
+    const applyRemote = (remote: Drawing) => {
+      if (disposed) return;
+      const pending = latestScene.current.get(remote.id);
+      if (remote.owner !== user?.id && remote.share_mode !== "edit") latestScene.current.delete(remote.id);
+      else if (pending) latestScene.current.set(remote.id, mergeScenes(pending, remote.scene));
+      setDrawings(items => items.map(item => item.id === remote.id
+        ? { ...item, ...normalizeDrawing(remote), scene: mergeScenes(
+            pending || item.scene, remote.scene,
+          ) }
+        : item));
+    };
+    const removeRemote = () => {
+      if (disposed) return;
+      latestScene.current.delete(activeId);
+      setDrawings(items => items.filter(item => item.id !== activeId));
+      setActiveId(null);
+    };
+    const refresh = async () => {
+      try {
+        applyRemote(await pb.collection("drawings").getOne<Drawing>(activeId, {
+          ...options, requestKey: null,
+        }));
+      } catch (error) {
+        if (error instanceof Error && "status" in error && [403, 404].includes(Number(error.status))) removeRemote();
+      }
+    };
+    const subscriptions: Array<() => Promise<void>> = [];
+    const keepSubscription = (stop: () => Promise<void>) => {
+      if (disposed) void stop(); else subscriptions.push(stop);
+    };
+    void pb.collection("drawings").subscribe<Drawing>(activeId, event => {
+      if (event.action === "delete") removeRemote(); else applyRemote(event.record);
+    }, options).then(stop => {
+      keepSubscription(stop);
+      // Close the gap between initial load and establishing the subscription.
+      if (!disposed) void refresh();
+    }).catch(() => { if (!disposed) void refresh(); });
+    void pb.realtime.subscribe("PB_CONNECT", () => void refresh()).then(keepSubscription).catch(() => {});
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    // Revalidate shared access even when revocation makes further SSE events
+    // inaccessible; this also recovers updates if the connection was interrupted.
+    const accessTimer = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, sharedLink ? 5000 : 15000);
+    return () => {
+      disposed = true;
+      clearInterval(accessTimer);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+      subscriptions.forEach(stop => void stop());
+    };
+  }, [activeId, pb, sharedLink, user?.id]);
 
   useEffect(() => {
     if (!isMobile || sidebarCollapsed || authPromptOpen || adminPanelOpen || sharePanelOpen) return;
@@ -853,10 +923,7 @@ function DrawWorkspace({
 
   const saveScene = useCallback(
     async (drawingId: string, scene: SceneData) => {
-      if (!canEditActiveDrawing) {
-        return;
-      }
-      if (!user && !sharedLink) {
+      if (drawingId === localDrawingId) {
         const updated = new Date().toISOString();
         let nextDrawing: Drawing | null = null;
 
@@ -876,7 +943,7 @@ function DrawWorkspace({
           saveLocalDrawing(nextDrawing);
         }
         setStatus(t.status.savedLocally);
-        return;
+        return true;
       }
 
       setStatus(t.status.saving);
@@ -884,19 +951,31 @@ function DrawWorkspace({
       try {
         const updated = await pb
           .collection("drawings")
-          .update<Pick<Drawing, "updated">>(drawingId, { scene }, {
-            fields: "updated",
-            query: sharedLink ? { share_token: sharedLink.token } : undefined,
+          .update<Pick<Drawing, "id" | "scene" | "updated">>(drawingId, { scene }, {
+            fields: "id,scene,updated",
+            requestKey: null,
+            query: { scene_merge: "1", ...(sharedLink ? { share_token: sharedLink.token } : {}) },
           });
 
         setDrawings((items) =>
           items.map((item) =>
-            item.id === drawingId ? { ...item, scene, updated: updated.updated } : item,
+            item.id === drawingId ? { ...item,
+              scene: mergeScenes(
+                mergeScenes(item.scene, updated.scene), latestScene.current.get(drawingId) || scene,
+              ),
+              updated: updated.updated } : item,
           ),
         );
         setStatus(t.status.saved);
+        return true;
       } catch (error) {
         setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
+        if (error instanceof Error && "status" in error && [403, 404].includes(Number(error.status))) {
+          latestScene.current.delete(drawingId);
+          // An inaccessible/deleted drawing must not be retried indefinitely.
+          return true;
+        }
+        return false;
       }
     },
     [
@@ -906,7 +985,6 @@ function DrawWorkspace({
       t.status.savedLocally,
       t.status.saving,
       user,
-      canEditActiveDrawing,
       sharedLink,
     ],
   );
@@ -937,29 +1015,46 @@ function DrawWorkspace({
     }
   }, [activeAccess, activeDrawing, pb, t.status.couldNotShare, t.status.saved]);
 
+  const flushScene = useCallback(async () => {
+    if (savingScene.current) return;
+    const pending = latestScene.current.entries().next().value;
+    if (!pending) return;
+    const [drawingId, scene] = pending;
+    latestScene.current.delete(drawingId);
+    savingScene.current = true;
+    const saved = await saveScene(drawingId, scene);
+    savingScene.current = false;
+    if (!saved) latestScene.current.set(drawingId,
+      mergeScenes(scene, latestScene.current.get(drawingId) || scene));
+    if (saved && latestScene.current.size && !saveTimer.current) {
+      saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
+        flushSceneRef.current();
+      }, 250);
+    }
+  }, [saveScene]);
+  flushSceneRef.current = () => { void flushScene(); };
+
   const scheduleSave = useCallback(
     (scene: SceneData) => {
       if (!activeDrawing) {
         return;
       }
 
-      latestScene.current = scene;
-
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-      }
-
-      saveTimer.current = setTimeout(() => {
-        if (latestScene.current) {
-          void saveScene(activeDrawing.id, latestScene.current);
-        }
-      }, 1800);
+      latestScene.current.set(activeDrawing.id, scene);
+      if (!saveTimer.current) saveTimer.current = setTimeout(() => {
+        saveTimer.current = null;
+        flushSceneRef.current();
+      }, activeDrawing.id === localDrawingId ? 1800 : 250);
     },
-    [activeDrawing, saveScene],
+    [activeDrawing],
   );
 
   useEffect(() => {
+    const retry = () => flushSceneRef.current();
+    window.addEventListener("online", retry);
     return () => {
+      window.removeEventListener("online", retry);
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
       }
@@ -1165,6 +1260,8 @@ function DrawWorkspace({
               locale={locale}
               readOnly={!canEditActiveDrawing}
               scheduleSave={scheduleSave}
+              pb={pb}
+              sharedLink={sharedLink}
             />
           </>
         ) : (
@@ -1209,13 +1306,22 @@ function DrawingEditor({
   locale,
   readOnly,
   scheduleSave,
+  pb,
+  sharedLink,
 }: {
   drawing: Drawing;
   locale: Locale;
   readOnly: boolean;
   scheduleSave: (scene: SceneData) => void;
+  pb: PocketBase;
+  sharedLink: SharedDrawingLink | null;
 }) {
   const [module, setModule] = useState<ExcalidrawModule | null>(null);
+  const [editorAPI, setEditorAPI] = useState<EditorAPI | null>(null);
+  const lastFingerprint = useRef(sceneFingerprint(drawing.scene));
+  const applyingRemote = useRef(false);
+  const laserSessionId = useRef(crypto.randomUUID());
+  const laserSend = useRef<(event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void>(() => {});
   const [loadError, setLoadError] = useState("");
   const t = translations[locale];
 
@@ -1241,6 +1347,96 @@ function DrawingEditor({
     };
   }, [t.status.canvasLoadError]);
 
+  useEffect(() => {
+    if (!editorAPI || !module || sceneFingerprint(drawing.scene) === lastFingerprint.current) return;
+    const elements = module.reconcileElements(
+      editorAPI.getSceneElementsIncludingDeleted(),
+      (drawing.scene.elements || []) as Parameters<ExcalidrawModule["reconcileElements"]>[1],
+      editorAPI.getAppState(),
+    );
+    applyingRemote.current = true;
+    try {
+      const localFiles = editorAPI.getFiles();
+      const files = Object.entries(drawing.scene.files || {}).filter(([id]) => !localFiles[id]).map(([, file]) => file);
+      if (files.length) editorAPI.addFiles(files as Parameters<EditorAPI["addFiles"]>[0]);
+      editorAPI.updateScene({
+        elements,
+        appState: drawing.scene.appState?.viewBackgroundColor
+          ? { viewBackgroundColor: String(drawing.scene.appState.viewBackgroundColor) } : undefined,
+        captureUpdate: module.CaptureUpdateAction.NEVER,
+      });
+      lastFingerprint.current = sceneFingerprint({
+        elements: [...editorAPI.getSceneElementsIncludingDeleted()],
+        files: editorAPI.getFiles(), appState: editorAPI.getAppState(),
+      });
+    } finally { applyingRemote.current = false; }
+  }, [drawing.scene, editorAPI, module]);
+
+  useEffect(() => {
+    if (!editorAPI || drawing.id === localDrawingId) return;
+    let disposed = false;
+    let stop: (() => Promise<void>) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let sending = false;
+    let wasActive = false;
+    let pending: { sessionId: string; x: number; y: number; active: boolean } | null = null;
+    const collaborators = new Map<string, { value: Collaborator; expires: number }>();
+    const render = () => editorAPI.updateScene({
+      collaborators: new Map([...collaborators].map(([id, item]) => [id, item.value])) as
+        NonNullable<Parameters<EditorAPI["updateScene"]>[0]["collaborators"]>,
+    });
+    const options = sharedLink ? { query: { share_token: sharedLink.token } } : {};
+    const send = async () => {
+      timer = undefined;
+      if (sending || !pending || disposed) return;
+      const body = pending;
+      pending = null;
+      sending = true;
+      try {
+        await pb.send(`/api/drawings/${drawing.id}/laser`, { ...options, method: "POST", body, requestKey: null });
+      } catch { /* Laser delivery is ephemeral; never block drawing or saving. */ }
+      finally {
+        sending = false;
+        if (pending && !disposed) timer = setTimeout(() => void send(), 80);
+      }
+    };
+    laserSend.current = event => {
+      if (readOnly || disposed) return;
+      const active = event.pointer.tool === "laser" && event.button === "down";
+      if (!active && !wasActive) return;
+      wasActive = active;
+      pending = { sessionId: laserSessionId.current, x: event.pointer.x, y: event.pointer.y, active };
+      if (!timer && !sending) timer = setTimeout(() => void send(), active ? 80 : 0);
+    };
+    void pb.realtime.subscribe(`draw-laser/${drawing.id}`, (event: {
+      sessionId: string; pointer: { x: number; y: number; tool: "laser" }; button: "down" | "up";
+    }) => {
+      if (disposed || event.sessionId === laserSessionId.current || !event.pointer ||
+          !Number.isFinite(event.pointer.x) || !Number.isFinite(event.pointer.y)) return;
+      collaborators.set(event.sessionId, {
+        value: { pointer: event.pointer, button: event.button, username: "Draw" }, expires: Date.now() + 1500,
+      });
+      render();
+    }, options).then(unsubscribe => {
+      if (disposed) void unsubscribe(); else stop = unsubscribe;
+    }).catch(() => {});
+    const expire = setInterval(() => {
+      let changed = false;
+      for (const [id, item] of collaborators) {
+        if (item.expires < Date.now()) { collaborators.delete(id); changed = true; }
+      }
+      if (changed) render();
+    }, 400);
+    return () => {
+      disposed = true;
+      laserSend.current = () => {};
+      if (timer) clearTimeout(timer);
+      clearInterval(expire);
+      if (stop) void stop();
+      editorAPI.updateScene({ collaborators: new Map() });
+    };
+  }, [drawing.id, editorAPI, pb, readOnly, sharedLink]);
+
   if (loadError) {
     return (
       <div className="empty-state">
@@ -1264,10 +1460,21 @@ function DrawingEditor({
     <div className="canvas-frame">
       <Excalidraw
         initialData={drawing.scene}
+        excalidrawAPI={setEditorAPI}
+        isCollaborating={drawing.id !== localDrawingId && drawing.share_mode !== "restricted"}
+        onPointerUpdate={event => laserSend.current(event)}
         langCode={locale === "es" ? "es-ES" : "en"}
         onChange={readOnly ? undefined : (elements, appState, files) => {
+          if (applyingRemote.current) return;
           const serialized = serializeAsJSON(elements, appState, files, "local");
-          scheduleSave(JSON.parse(serialized) as SceneData);
+          const scene = JSON.parse(serialized) as SceneData;
+          // File export removes deleted elements. Collaboration must retain
+          // them so an older editor cannot resurrect a deleted shape.
+          scene.elements = editorAPI ? [...editorAPI.getSceneElementsIncludingDeleted()] : elements;
+          const fingerprint = sceneFingerprint(scene);
+          if (fingerprint === lastFingerprint.current) return;
+          lastFingerprint.current = fingerprint;
+          scheduleSave(scene);
         }}
         viewModeEnabled={readOnly}
         UIOptions={{

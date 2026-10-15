@@ -72,3 +72,23 @@ npm run start
 ## Sharing
 
 The Share button supports restricted, view-only, and editable links. Before enabling it in production, add the sharing fields and access rules described in [docs/pocketbase-sharing.md](docs/pocketbase-sharing.md) to the PocketBase `drawings` collection.
+
+Shared drawings receive live changes through PocketBase realtime subscriptions.
+Edits are sent about every 250 ms while drawing. Owners/editors can use the
+laser tool to present to all authorized viewers; laser positions are temporary
+and are not stored in the drawing. Reload existing tabs once after deploying
+this feature.
+
+Concurrent changes to different elements are merged on the server. Conflicting
+edits to the same element use Excalidraw's version and nonce ordering. Local
+viewport, zoom and selection are kept on each device. Deleted elements remain
+as tombstones to prevent stale clients from bringing them back.
+
+To run the collaboration integration checks against a disposable local database:
+
+```bash
+POCKETBASE_BIN=/path/to/pocketbase node --experimental-eventsource --test pocketbase/tests/*.test.mjs
+```
+
+Use the PocketBase version pinned in `pocketbase/Dockerfile`. The tests create
+and remove their own temporary database and do not connect to production.
