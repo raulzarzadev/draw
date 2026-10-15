@@ -104,7 +104,7 @@ type ExcalidrawModule = {
 };
 
 const pocketBaseUrl =
-  import.meta.env.VITE_POCKETBASE_URL ?? "https://pb.raulzarza.com";
+  import.meta.env.VITE_POCKETBASE_URL ?? "https://draw-db.raulzarza.com";
 const adminEmails = String(
   import.meta.env.VITE_ADMIN_EMAILS ?? "raulzarza.dev@gmail.com",
 )
@@ -472,12 +472,6 @@ const getEmail = (user: AuthModel) => {
   }
 
   return String(user.email ?? "");
-};
-
-const generateRandomPassword = () => {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 export default function DrawCanvas() {
@@ -1269,19 +1263,7 @@ function AuthPanel({
     setStatus(t.auth.working);
 
     try {
-      let result;
-
-      try {
-        result = await pb.collection("users").requestOTP(normalizedEmail);
-      } catch {
-        const password = generateRandomPassword();
-        await pb.collection("users").create({
-          email: normalizedEmail,
-          password,
-          passwordConfirm: password,
-        });
-        result = await pb.collection("users").requestOTP(normalizedEmail);
-      }
+      const result = await pb.collection("users").requestOTP(normalizedEmail);
 
       setOtpId(result.otpId);
       setCode("");

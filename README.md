@@ -27,7 +27,7 @@ PORT=3000 bash scripts/local.sh
 The app uses Raul's PocketBase by default:
 
 ```text
-https://pb.raulzarza.com
+https://draw-db.raulzarza.com
 ```
 
 To point at another PocketBase instance, copy `.env.example` to `.env.local` and change:
@@ -41,6 +41,10 @@ VITE_ADMIN_EMAILS=admin@example.com
 admin panel.
 
 ## PocketBase Migrations
+
+Production PocketBase runs as the separate `draw-db` Railway service with a
+persistent volume mounted at `/pb/pb_data`. Its Docker build context is
+`pocketbase/`. See [Railway backend setup](docs/railway-pocketbase.md).
 
 PocketBase collection rules live in:
 

@@ -10,3 +10,4 @@ vite.config.js
 .wrangler/
 .next/
 next-env.d.ts
+pocketbase/pb_data/
