@@ -21,8 +21,7 @@ support a fresh database, OTP authentication, drawings, sharing and limits.
 
 Set these variables on **draw-db**, never on the frontend:
 
-- `BREVO_SMTP_LOGIN`: SMTP login from Brevo.
-- `BREVO_SMTP_KEY`: SMTP key (not an API key).
+- `BREVO_API_KEY`: Brevo API key for HTTPS transactional email delivery.
 - `BREVO_SENDER_EMAIL`: sender email verified in Brevo.
 - `APP_URL=https://draw.raulzarza.com`.
 
@@ -31,8 +30,11 @@ The configured sender is `Draw <no-reply@draw-mail.raulzarza.com>`. The
 TXT, two DKIM CNAME records (DNS only), and a DMARC TXT record in Cloudflare.
 It is separate from the web app's `draw.raulzarza.com` CNAME.
 
-Restart/redeploy the backend after changing them. The bootstrap hook configures
-Brevo SMTP on port 587 with STARTTLS. OTP requests register missing users with a
+Restart/redeploy the backend after changing them. The mail hook uses Brevo's
+HTTPS API, which works on Railway Hobby (outbound SMTP is blocked on that plan).
+For environments that permit SMTP, the optional `BREVO_SMTP_LOGIN` and
+`BREVO_SMTP_KEY` configure port 587 with STARTTLS when no API key is supplied.
+An API delivery failure is logged and never retried through SMTP. OTP requests register missing users with a
 random inaccessible password; only successful email-code verification creates
 an authenticated session. Password login and public direct user creation are
 disabled. Admin rules require verified ownership of the configured admin email.
