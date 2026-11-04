@@ -111,7 +111,7 @@ select:disabled:where(:not(.excalidraw *)) {
 }
 
 .auth-panel {
-  width: min(380px, 100%);
+  width: min(440px, 100%);
   border: 1px solid #dfe3e8;
   border-radius: 8px;
   background: #ffffff;
@@ -126,10 +126,21 @@ select:disabled:where(:not(.excalidraw *)) {
 }
 
 .auth-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 12px;
+  margin-bottom: 20px;
+}
+
+.auth-header > div:first-child {
+  min-width: 0;
+}
+
+.auth-header h1 {
+  margin-bottom: 0;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .auth-header-actions {
@@ -139,10 +150,11 @@ select:disabled:where(:not(.excalidraw *)) {
 }
 
 .auth-description {
-  margin: -8px 0 10px;
+  margin: 0 0 14px;
   color: #626a73;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .auth-panel input,
@@ -848,7 +860,6 @@ select:disabled:where(:not(.excalidraw *)) {
 }
 .auth-panel { margin-block: auto; min-width: 0; }
 .auth-shell, .share-backdrop { place-items: safe center; }
-.auth-header { flex-wrap: wrap; }
 .auth-header .icon-button { width: 44px; min-width: 44px; margin-top: 0; }
 .share-backdrop { overflow-y: auto; max-height: 100dvh; }
 .share-panel { min-width: 0; max-height: calc(100dvh - 40px); overflow-y: auto; }
@@ -911,3 +922,5 @@ select:disabled:where(:not(.excalidraw *)) {
 }
 
 .mobile-workspace-header > span { display: inline-flex; align-items: center; gap: 6px; }
+
+.library-status { max-width: 36rem; margin: 0; color: #626a73; text-align: center; overflow-wrap: anywhere; }

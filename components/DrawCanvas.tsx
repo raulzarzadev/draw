@@ -7,6 +7,7 @@ import type { ComponentType } from "react";
 import type { Collaborator, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeScenes, sceneFingerprint } from "@draw/scene-sync";
+import { createDraftImporter, draftImportId, hasDraftContent, loadAccountLibrary, selectDrawingId } from "../src/drawing-session";
 
 type Locale = "es" | "en";
 type ShareMode = "restricted" | "view" | "edit";
@@ -145,10 +146,12 @@ const getDrawingLimitForUser = async (pb: PocketBase, userId: string) => {
     pb.collection("draw_settings").getFullList<DrawSetting>({
       filter: `key = "${drawingLimitSettingKey}"`,
       fields: "id,key,value",
+      requestKey: null,
     }),
     pb.collection("drawing_limits").getFullList<DrawingLimitRecord>({
       filter: `owner = "${userId}"`,
       fields: "id,owner,maxDrawings",
+      requestKey: null,
     }),
   ]);
 
@@ -293,6 +296,7 @@ const translations = {
       language: "Idioma",
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
+      reloadDrawings: "Volver a cargar pizarras",
       share: "Compartir",
       title: "Titulo del dibujo",
     },
@@ -331,6 +335,7 @@ const translations = {
       creating: "Creando...",
       deleted: "Eliminado",
       duplicated: "Duplicado",
+      couldNotLoadLimit: "Tus pizarras están disponibles, pero no se pudo consultar el límite. Reconecta para crear más.",
       drawingLimitReached: "Límite alcanzado. Suscríbete para crear más pizarras.",
       loading: "Cargando dibujos...",
       noDrawings: "Aun no hay dibujos",
@@ -395,6 +400,7 @@ const translations = {
       language: "Language",
       showDrawings: "Show drawings",
       signOut: "Sign out",
+      reloadDrawings: "Reload saved boards",
       share: "Share",
       title: "Drawing title",
     },
@@ -433,6 +439,7 @@ const translations = {
       creating: "Creating...",
       deleted: "Deleted",
       duplicated: "Duplicated",
+      couldNotLoadLimit: "Your boards are available, but the limit could not be loaded. Reconnect to create more.",
       drawingLimitReached: "Limit reached. Subscribe to create more boards.",
       loading: "Loading drawings...",
       noDrawings: "No drawings yet",
@@ -521,7 +528,7 @@ function DrawWorkspace({
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [authPromptMessage, setAuthPromptMessage] = useState<string>();
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
-  const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
+  const [drawingLimit, setDrawingLimit] = useState(0);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Drawing | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -529,6 +536,10 @@ function DrawWorkspace({
   const savingScene = useRef(false);
   const flushSceneRef = useRef<() => void>(() => {});
   const localDraftToImport = useRef<Drawing | null>(null);
+  const userId = user?.id ?? null;
+  const currentAccount = useRef(userId);
+  const libraryVersion = useRef(0);
+  const importDraft = useMemo(() => createDraftImporter<Drawing>(), []);
   const isCloudAccount = !!user;
   const isAdmin = adminEmails.includes(getEmail(user).toLowerCase());
   const sharedLink = useMemo(readSharedDrawingLink, []);
@@ -557,7 +568,8 @@ function DrawWorkspace({
   const openAuthPrompt = useCallback(
     (message?: string, importCurrentDrawing = false) => {
       if (importCurrentDrawing && !user && activeDrawing) {
-        localDraftToImport.current = activeDrawing;
+        const draft = { ...activeDrawing, scene: latestScene.current.get(activeDrawing.id) || activeDrawing.scene };
+        localDraftToImport.current = hasDraftContent(draft) ? draft : null;
       }
 
       setAuthPromptMessage(message);
@@ -579,58 +591,64 @@ function DrawWorkspace({
   }, [t.status.savedLocally]);
 
   const loadDrawings = useCallback(async (drawingToImport?: Drawing | null) => {
+    if (!userId) return;
+    const version = ++libraryVersion.current;
+    const isCurrent = () => version === libraryVersion.current && currentAccount.current === userId;
     setStatus(t.status.loading);
-
     try {
-      const nextDrawings = await pb.collection("drawings").getFullList<Drawing>({
-        filter: `owner = "${user?.id ?? ""}"`,
-        sort: "-updated",
-        fields: "id,owner,title,scene,share_mode,share_token,created,updated",
+      const library = await loadAccountLibrary<Drawing>({
+        loadDrawings: () => pb.collection("drawings").getFullList<Drawing>({
+          filter: `owner = "${userId}"`, sort: "-updated", requestKey: null,
+          fields: "id,owner,title,scene,share_mode,share_token,created,updated",
+        }),
+        loadLimit: () => getDrawingLimitForUser(pb, userId),
+        isCurrent,
+        publish: items => {
+          const normalized = items.map(normalizeDrawing);
+          setDrawings(current => normalized.map(drawing => {
+            const local = current.find(item => item.id === drawing.id);
+            const pending = latestScene.current.get(drawing.id);
+            return local ? { ...drawing, scene: mergeScenes(
+              mergeScenes(local.scene, drawing.scene), pending || drawing.scene,
+            ) } : drawing;
+          }));
+          setActiveId(current => selectDrawingId(current, normalized));
+          setStatus(items.length ? t.status.ready : t.status.createFirst);
+        },
       });
-      const nextDrawingLimit = user
-        ? await getDrawingLimitForUser(pb, user.id)
-        : defaultRegisteredDrawingLimit;
-      const importedDrawing =
-        drawingToImport && user && nextDrawings.length < nextDrawingLimit
-          ? await pb.collection("drawings").create<Drawing>({
-              owner: user.id,
-              title: titleForStorage(drawingToImport.title, t.terms.untitledDrawing),
-              scene: drawingToImport.scene,
-            })
-          : null;
-      const allDrawings = (importedDrawing
-        ? [importedDrawing, ...nextDrawings]
-        : nextDrawings).map(normalizeDrawing);
-
-      if (importedDrawing) {
-        localDraftToImport.current = null;
+      if (!library) return;
+      const { drawings: existing, limit } = library;
+      // Unknown limits block creation, but never hide the user's saved library.
+      setDrawingLimit(limit ?? 0);
+      if (limit === null) { setStatus(t.status.couldNotLoadLimit); return; }
+      if (!drawingToImport || !hasDraftContent(drawingToImport)) return;
+      const id = await draftImportId(userId, drawingToImport.created);
+      if (!isCurrent()) return;
+      const alreadyImported = existing.find(drawing => drawing.id === id);
+      if (!alreadyImported && existing.length >= limit) {
+        setStatus(t.status.drawingLimitReached);
+        return;
       }
-      setDrawingLimit(nextDrawingLimit);
-      setDrawings(allDrawings);
-      setActiveId((current) => current ?? allDrawings[0]?.id ?? null);
-      setStatus(
-        importedDrawing
-          ? t.status.saved
-          : drawingToImport && user && nextDrawings.length >= nextDrawingLimit
-            ? t.status.drawingLimitReached
-          : allDrawings.length
-            ? t.status.ready
-            : t.status.createFirst,
-      );
+      const imported = alreadyImported || await importDraft(drawingToImport, userId, {
+        create: id => pb.collection("drawings").create<Drawing>({
+          id, owner: userId,
+          title: titleForStorage(drawingToImport.title, t.terms.untitledDrawing),
+          scene: drawingToImport.scene,
+        }, { requestKey: null }),
+        find: id => pb.collection("drawings").getOne<Drawing>(id, { requestKey: null }),
+        isCurrent,
+      });
+      if (!isCurrent() || !imported) return;
+      localDraftToImport.current = null;
+      // Retire the guest copy only after a confirmed import; keep it on failure.
+      saveLocalDrawing(createLocalDrawing(""));
+      setDrawings(items => [normalizeDrawing(imported), ...items.filter(item => item.id !== imported.id)]);
+      setActiveId(imported.id);
+      setStatus(t.status.saved);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : t.status.couldNotLoad);
+      if (isCurrent()) setStatus(error instanceof Error ? error.message : t.status.couldNotLoad);
     }
-  }, [
-    pb,
-    t.status.couldNotLoad,
-    t.status.createFirst,
-    t.status.drawingLimitReached,
-    t.status.loading,
-    t.status.ready,
-    t.status.saved,
-    t.terms.untitledDrawing,
-    user,
-  ]);
+  }, [pb, userId, importDraft, t]);
 
   const loadSharedDrawing = useCallback(async (link: SharedDrawingLink) => {
     setStatus(t.status.loading);
@@ -653,9 +671,19 @@ function DrawWorkspace({
   useEffect(() => {
     const unsubscribe = pb.authStore.onChange(
       () => {
-        setUser(pb.authStore.record);
-        setDrawings([]);
-        setActiveId(null);
+        const nextUser = pb.authStore.record;
+        const nextAccount = nextUser?.id ?? null;
+        if (currentAccount.current !== nextAccount) {
+          currentAccount.current = nextAccount;
+          libraryVersion.current++;
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+          latestScene.current.clear();
+          setDrawings([]);
+          setActiveId(null);
+          setDrawingLimit(0);
+        }
+        setUser(nextUser);
       },
       true,
     );
@@ -685,10 +713,19 @@ function DrawWorkspace({
     if (user) {
       setAuthPromptOpen(false);
       void loadDrawings(localDraftToImport.current);
-      return;
+      const refresh = () => {
+        if (document.visibilityState === "visible") void loadDrawings(localDraftToImport.current);
+      };
+      window.addEventListener("online", refresh);
+      document.addEventListener("visibilitychange", refresh);
+      return () => {
+        libraryVersion.current++;
+        window.removeEventListener("online", refresh);
+        document.removeEventListener("visibilitychange", refresh);
+      };
     }
     loadFreeDrawing();
-  }, [loadDrawings, loadFreeDrawing, loadSharedDrawing, sharedLink, user]);
+  }, [loadDrawings, loadFreeDrawing, loadSharedDrawing, sharedLink, userId]);
 
   useEffect(() => {
     if (!activeId || activeId === localDrawingId || (!user && !sharedLink)) return;
@@ -840,6 +877,7 @@ function DrawWorkspace({
       return;
     }
 
+    if (!drawingLimit) { setStatus(t.status.couldNotLoadLimit); return; }
     if (drawings.length >= drawingLimit) {
       setStatus(t.status.drawingLimitReached);
       return;
@@ -864,6 +902,7 @@ function DrawWorkspace({
   }, [
     pb,
     t.status.couldNotCreate,
+    t.status.couldNotLoadLimit,
     t.status.created,
     t.status.creating,
     t.status.drawingLimitReached,
@@ -890,7 +929,7 @@ function DrawWorkspace({
       );
 
       if (!user && !sharedLink) {
-        localDraftToImport.current = nextDrawing;
+        localDraftToImport.current = hasDraftContent(nextDrawing) ? nextDrawing : null;
         saveLocalDrawing(nextDrawing);
         setStatus(t.status.savedLocally);
         return;
@@ -955,6 +994,7 @@ function DrawWorkspace({
         return;
       }
 
+      if (!drawingLimit) { setStatus(t.status.couldNotLoadLimit); return; }
       if (drawings.length >= drawingLimit) {
         setStatus(t.status.drawingLimitReached);
         return;
@@ -980,6 +1020,7 @@ function DrawWorkspace({
       pb,
       t.status.accountRequiredForMore,
       t.status.couldNotDuplicate,
+      t.status.couldNotLoadLimit,
       t.status.duplicated,
       t.status.drawingLimitReached,
       t.terms.copySuffix,
@@ -993,28 +1034,15 @@ function DrawWorkspace({
   const saveScene = useCallback(
     async (drawingId: string, scene: SceneData) => {
       if (drawingId === localDrawingId) {
-        const updated = new Date().toISOString();
-        let nextDrawing: Drawing | null = null;
-
-        setDrawings((items) =>
-          items.map((item) => {
-            if (item.id !== drawingId) {
-              return item;
-            }
-
-            nextDrawing = { ...item, scene, updated };
-            return nextDrawing;
-          }),
-        );
-
-        if (nextDrawing) {
-          localDraftToImport.current = nextDrawing;
-          saveLocalDrawing(nextDrawing);
-        }
+        const draft = { ...loadLocalDrawing(""), scene, updated: new Date().toISOString() };
+        saveLocalDrawing(draft);
+        localDraftToImport.current = hasDraftContent(draft) ? draft : null;
+        setDrawings(items => items.map(item => item.id === drawingId ? draft : item));
         setStatus(t.status.savedLocally);
         return true;
       }
 
+      if (currentAccount.current !== (user?.id ?? null)) return true;
       setStatus(t.status.saving);
 
       try {
@@ -1026,6 +1054,7 @@ function DrawWorkspace({
             query: { scene_merge: "1", ...(sharedLink ? { share_token: sharedLink.token } : {}) },
           });
 
+        if (currentAccount.current !== (user?.id ?? null)) return true;
         setDrawings((items) =>
           items.map((item) =>
             item.id === drawingId ? { ...item,
@@ -1038,6 +1067,7 @@ function DrawWorkspace({
         setStatus(t.status.saved);
         return true;
       } catch (error) {
+        if (currentAccount.current !== (user?.id ?? null)) return true;
         setStatus(error instanceof Error ? error.message : t.status.couldNotSave);
         if (error instanceof Error && "status" in error && [403, 404].includes(Number(error.status))) {
           latestScene.current.delete(drawingId);
@@ -1091,8 +1121,10 @@ function DrawWorkspace({
     const [drawingId, scene] = pending;
     latestScene.current.delete(drawingId);
     savingScene.current = true;
+    const account = currentAccount.current;
     const saved = await saveScene(drawingId, scene);
     savingScene.current = false;
+    if (account !== currentAccount.current) { flushSceneRef.current(); return; }
     if (!saved) latestScene.current.set(drawingId,
       mergeScenes(scene, latestScene.current.get(drawingId) || scene));
     if (saved && latestScene.current.size && !saveTimer.current) {
@@ -1110,13 +1142,21 @@ function DrawWorkspace({
         return;
       }
 
+      if (activeDrawing.id === localDrawingId) {
+        const draft = { ...activeDrawing, scene, updated: new Date().toISOString() };
+        saveLocalDrawing(draft);
+        localDraftToImport.current = hasDraftContent(draft) ? draft : null;
+        setDrawings(items => items.map(item => item.id === localDrawingId ? draft : item));
+        setStatus(t.status.savedLocally);
+        return;
+      }
       latestScene.current.set(activeDrawing.id, scene);
       if (!saveTimer.current) saveTimer.current = setTimeout(() => {
         saveTimer.current = null;
         flushSceneRef.current();
-      }, activeDrawing.id === localDrawingId ? 1800 : 250);
+      }, 250);
     },
-    [activeDrawing],
+    [activeDrawing, t.status.savedLocally],
   );
 
   useEffect(() => {
@@ -1362,7 +1402,13 @@ function DrawWorkspace({
           </>
         ) : (
           <div className="empty-state">
-            <h2>{t.status.noDrawings}</h2>
+            <h2>{status === t.status.loading ? t.status.loading : t.status.noDrawings}</h2>
+            <p className="library-status" role="status">{status}</p>
+            {user && !sharedLink ? (
+              <button type="button" onClick={() => void loadDrawings(localDraftToImport.current)}>
+                {t.labels.reloadDrawings}
+              </button>
+            ) : null}
             <button className="icon-text-button" type="button" onClick={createDrawing}>
               <Icon name="plus" />
               <span>{t.labels.createDrawing}</span>
@@ -1692,6 +1738,7 @@ function AuthPanel({
           <>
             <p className="auth-description">{message || t.auth.cloudPrompt}</p>
             <input
+              aria-label={t.auth.email}
               autoComplete="email"
               onChange={(event) => setEmail(event.currentTarget.value)}
               onKeyDown={(event) => {
@@ -1711,6 +1758,7 @@ function AuthPanel({
           <>
             <p className="auth-description">{`${t.auth.codeSentTo} ${email.trim().toLowerCase()}`}</p>
             <input
+              aria-label={t.auth.code}
               autoComplete="one-time-code"
               autoFocus
               inputMode="numeric"
