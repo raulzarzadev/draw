@@ -87,7 +87,7 @@ as tombstones to prevent stale clients from bringing them back.
 To run the collaboration integration checks against a disposable local database:
 
 ```bash
-POCKETBASE_BIN=/path/to/pocketbase node --experimental-eventsource --test pocketbase/tests/*.test.mjs
+POCKETBASE_BIN=/path/to/pocketbase node --experimental-strip-types --experimental-eventsource --test pocketbase/tests/*.test.mjs
 ```
 
 Use the PocketBase version pinned in `pocketbase/Dockerfile`. The tests create
@@ -105,3 +105,13 @@ connectivity. API responses and shared-link URLs are not cached by the worker.
 Updates activate after the existing app windows/tabs close. Development mode does
 not register a service worker. Test the production build with `npm run build` and
 `npm run start`.
+
+Laser regression checks (including quick strokes and slow requests):
+
+```bash
+node --experimental-strip-types --test scripts/laser-channel.test.mjs
+```
+
+Shared viewers can receive laser trails without an account. Presenters must be
+signed in and have edit permission. The integration suite checks an anonymous
+viewer receiving a complete quick stroke against a disposable PocketBase.

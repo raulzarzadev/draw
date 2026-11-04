@@ -7,6 +7,7 @@ import type { ComponentType } from "react";
 import type { Collaborator, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { mergeScenes, sceneFingerprint } from "@draw/scene-sync";
+import { createLaserSender } from "../src/laser-channel";
 import { createDraftImporter, draftImportId, hasDraftContent, loadAccountLibrary, selectDrawingId } from "../src/drawing-session";
 
 type Locale = "es" | "en";
@@ -339,6 +340,7 @@ const translations = {
       duplicated: "Duplicado",
       couldNotLoadLimit: "Tus pizarras están disponibles, pero no se pudo consultar el límite. Reconecta para crear más.",
       drawingLimitReached: "Límite alcanzado. Suscríbete para crear más pizarras.",
+      laserUnavailable: "No se pudo conectar el láser compartido. Revisa tu conexión y vuelve a cargar el dibujo.",
       loading: "Cargando dibujos...",
       noDrawings: "Aun no hay dibujos",
       ready: "Listo",
@@ -445,6 +447,7 @@ const translations = {
       duplicated: "Duplicated",
       couldNotLoadLimit: "Your boards are available, but the limit could not be loaded. Reconnect to create more.",
       drawingLimitReached: "Limit reached. Subscribe to create more boards.",
+      laserUnavailable: "Could not connect the shared laser. Check your connection and reload the drawing.",
       loading: "Loading drawings...",
       noDrawings: "No drawings yet",
       ready: "Ready",
@@ -1481,6 +1484,7 @@ function DrawingEditor({
   const laserSessionId = useRef(crypto.randomUUID());
   const laserSend = useRef<(event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void>(() => {});
   const [loadError, setLoadError] = useState("");
+  const [laserError, setLaserError] = useState(false);
   const t = translations[locale];
 
   useEffect(() => {
@@ -1534,37 +1538,23 @@ function DrawingEditor({
     if (!editorAPI || drawing.id === localDrawingId) return;
     let disposed = false;
     let stop: (() => Promise<void>) | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let sending = false;
-    let wasActive = false;
-    let pending: { sessionId: string; x: number; y: number; active: boolean } | null = null;
     const collaborators = new Map<string, { value: Collaborator; expires: number }>();
     const render = () => editorAPI.updateScene({
       collaborators: new Map([...collaborators].map(([id, item]) => [id, item.value])) as
         NonNullable<Parameters<EditorAPI["updateScene"]>[0]["collaborators"]>,
     });
     const options = sharedLink ? { query: { share_token: sharedLink.token } } : {};
-    const send = async () => {
-      timer = undefined;
-      if (sending || !pending || disposed) return;
-      const body = pending;
-      pending = null;
-      sending = true;
-      try {
+    setLaserError(false);
+    const sender = createLaserSender({
+      sessionId: laserSessionId.current,
+      send: async body => {
         await pb.send(`/api/drawings/${drawing.id}/laser`, { ...options, method: "POST", body, requestKey: null });
-      } catch { /* Laser delivery is ephemeral; never block drawing or saving. */ }
-      finally {
-        sending = false;
-        if (pending && !disposed) timer = setTimeout(() => void send(), 80);
-      }
-    };
+        if (!disposed) setLaserError(false);
+      },
+      onError: () => { if (!disposed) setLaserError(true); },
+    });
     laserSend.current = event => {
-      if (readOnly || disposed) return;
-      const active = event.pointer.tool === "laser" && event.button === "down";
-      if (!active && !wasActive) return;
-      wasActive = active;
-      pending = { sessionId: laserSessionId.current, x: event.pointer.x, y: event.pointer.y, active };
-      if (!timer && !sending) timer = setTimeout(() => void send(), active ? 80 : 0);
+      if (!readOnly && !disposed) sender.update(event);
     };
     void pb.realtime.subscribe(`draw-laser/${drawing.id}`, (event: {
       sessionId: string; pointer: { x: number; y: number; tool: "laser" }; button: "down" | "up";
@@ -1572,12 +1562,12 @@ function DrawingEditor({
       if (disposed || event.sessionId === laserSessionId.current || !event.pointer ||
           !Number.isFinite(event.pointer.x) || !Number.isFinite(event.pointer.y)) return;
       collaborators.set(event.sessionId, {
-        value: { pointer: event.pointer, button: event.button, username: "Draw" }, expires: Date.now() + 1500,
+        value: { pointer: { ...event.pointer, laserColor: "#e03131" }, button: event.button, username: "Draw" }, expires: Date.now() + 1500,
       });
       render();
     }, options).then(unsubscribe => {
       if (disposed) void unsubscribe(); else stop = unsubscribe;
-    }).catch(() => {});
+    }).catch(() => { if (!disposed) setLaserError(true); });
     const expire = setInterval(() => {
       let changed = false;
       for (const [id, item] of collaborators) {
@@ -1588,7 +1578,7 @@ function DrawingEditor({
     return () => {
       disposed = true;
       laserSend.current = () => {};
-      if (timer) clearTimeout(timer);
+      sender.dispose();
       clearInterval(expire);
       if (stop) void stop();
       editorAPI.updateScene({ collaborators: new Map() });
@@ -1616,6 +1606,7 @@ function DrawingEditor({
 
   return (
     <div className="canvas-frame">
+      {laserError ? <p className="laser-status" role="status">{t.status.laserUnavailable}</p> : null}
       <Excalidraw
         initialData={drawing.scene}
         excalidrawAPI={setEditorAPI}

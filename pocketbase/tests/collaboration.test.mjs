@@ -106,6 +106,23 @@ test("PocketBase merges simultaneous saves and protects scene and laser subscrip
     assert.equal(lasers[0].pointer.tool, "laser");
     assert.equal(denied.length, 0);
     assert.equal(deniedLasers.length, 0);
+    assert.equal(viewer.authStore.isValid, false, "laser recipient must be anonymous");
+    const { createLaserSender } = await import("../../src/laser-channel.ts");
+    const sender = createLaserSender({
+      sessionId: "quick-ui-stroke", interval: 10,
+      send: body => owner.send(`/api/drawings/${drawing.id}/laser`, { method: "POST", body, requestKey: null }),
+    });
+    try {
+      // Same burst of events produced by a quick drag in the real editor.
+      sender.update({ pointer: { x: 10, y: 20, tool: "laser" }, button: "down" });
+      sender.update({ pointer: { x: 90, y: 40, tool: "laser" }, button: "down" });
+      sender.update({ pointer: { x: 100, y: 50, tool: "laser" }, button: "up" });
+      await waitFor(() => lasers.some(event => event.sessionId === "quick-ui-stroke" && event.button === "up"));
+      const stroke = lasers.filter(event => event.sessionId === "quick-ui-stroke");
+      assert.equal(stroke[0].button, "down");
+      assert.equal(stroke.at(-1).button, "up");
+      assert.equal(stroke.at(-1).pointer.x, 100);
+    } finally { sender.dispose(); }
     await owner.collection("drawings").update(drawing.id, { share_mode: "view" });
     await assert.rejects(() => editor.collection("drawings").update(drawing.id, { scene: { elements: [] } }, mergeOptions));
     await assert.rejects(() => viewer.send(`/api/drawings/${drawing.id}/laser`, { ...options, method: "POST", body: { sessionId: "viewer", x: 1, y: 1, active: true } }));
