@@ -944,3 +944,34 @@ select:disabled:where(:not(.excalidraw *)) {
   line-height: 1.4;
   pointer-events: none;
 }
+
+/* Camera controls make the space beyond the screen reachable with a Pencil. */
+.canvas-navigation {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 4px;
+  border: 1px solid #d7dbe2;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgb(25 31 43 / 8%);
+}
+.canvas-navigation button {
+  min-height: 44px;
+  border-color: transparent;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.canvas-navigation button[aria-pressed="true"] {
+  background: #eeedf9;
+  color: #40378c;
+  border-color: #c8c3e9;
+}
+.canvas-frame:has(.canvas-navigation) .laser-status {
+  bottom: calc(128px + env(safe-area-inset-bottom));
+}

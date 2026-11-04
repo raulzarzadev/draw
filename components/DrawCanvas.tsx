@@ -297,6 +297,10 @@ const translations = {
       language: "Idioma",
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
+      moveCanvas: "Mover lienzo",
+      resumeDrawing: "Volver a dibujar",
+      fitDrawing: "Ver todo",
+      canvasNavigation: "Navegación del lienzo",
       signInToEdit: "Iniciar sesión para editar",
       reloadDrawings: "Volver a cargar pizarras",
       share: "Compartir",
@@ -404,6 +408,10 @@ const translations = {
       language: "Language",
       showDrawings: "Show drawings",
       signOut: "Sign out",
+      moveCanvas: "Move canvas",
+      resumeDrawing: "Resume drawing",
+      fitDrawing: "Fit drawing",
+      canvasNavigation: "Canvas navigation",
       signInToEdit: "Sign in to edit",
       reloadDrawings: "Reload saved boards",
       share: "Share",
@@ -1485,6 +1493,8 @@ function DrawingEditor({
   const laserSend = useRef<(event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void>(() => {});
   const [loadError, setLoadError] = useState("");
   const [laserError, setLaserError] = useState(false);
+  const [movingCanvas, setMovingCanvas] = useState(false);
+  const previousTool = useRef<Parameters<EditorAPI["setActiveTool"]>[0]>({ type: "selection" });
   const t = translations[locale];
 
   useEffect(() => {
@@ -1607,14 +1617,35 @@ function DrawingEditor({
   return (
     <div className="canvas-frame">
       {laserError ? <p className="laser-status" role="status">{t.status.laserUnavailable}</p> : null}
+      {editorAPI ? (
+        <div className="canvas-navigation" role="group" aria-label={t.labels.canvasNavigation}>
+          {!readOnly ? <button type="button" aria-pressed={movingCanvas}
+            onClick={() => {
+              const tool = editorAPI.getAppState().activeTool;
+              if (tool.type === "hand") {
+                editorAPI.setActiveTool(previousTool.current);
+              } else {
+                previousTool.current = tool;
+                editorAPI.setActiveTool({ type: "hand" });
+              }
+            }}>
+            {movingCanvas ? t.labels.resumeDrawing : t.labels.moveCanvas}
+          </button> : null}
+          <button type="button" onClick={() => editorAPI.scrollToContent(
+            editorAPI.getSceneElements(), { fitToContent: true, animate: false },
+          )}>{t.labels.fitDrawing}</button>
+        </div>
+      ) : null}
       <Excalidraw
         initialData={drawing.scene}
         excalidrawAPI={setEditorAPI}
         isCollaborating={drawing.id !== localDrawingId && drawing.share_mode !== "restricted"}
         onPointerUpdate={event => laserSend.current(event)}
         langCode={locale === "es" ? "es-ES" : "en"}
-        onChange={readOnly ? undefined : (elements, appState, files) => {
-          if (applyingRemote.current) return;
+        onChange={(elements, appState, files) => {
+          const state = appState as ReturnType<EditorAPI["getAppState"]>;
+          setMovingCanvas(state.activeTool.type === "hand");
+          if (readOnly || applyingRemote.current) return;
           const serialized = serializeAsJSON(elements, appState, files, "local");
           const scene = JSON.parse(serialized) as SceneData;
           // File export removes deleted elements. Collaboration must retain
