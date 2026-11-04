@@ -92,3 +92,16 @@ POCKETBASE_BIN=/path/to/pocketbase node --experimental-eventsource --test pocket
 
 Use the PocketBase version pinned in `pocketbase/Dockerfile`. The tests create
 and remove their own temporary database and do not connect to production.
+
+## Install as an app (PWA)
+
+Production builds include a web manifest, app icons, and a versioned service worker.
+Serve `dist/client` over HTTPS (localhost also works for testing). In Chrome/Edge,
+use the browser's install action; on iPhone/iPad, use Safari → Share → Add to Home Screen.
+
+The worker caches the application files after the first successful online visit.
+Local drawings can then reopen offline; account access and shared-drawing sync need
+connectivity. API responses and shared-link URLs are not cached by the worker.
+Updates activate after the existing app windows/tabs close. Development mode does
+not register a service worker. Test the production build with `npm run build` and
+`npm run start`.

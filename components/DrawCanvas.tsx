@@ -276,7 +276,8 @@ const translations = {
       resendCode: "Reenviar codigo",
       sendCode: "Enviar codigo",
       sendError: "No se pudo enviar el codigo. Intenta mas tarde.",
-      signIn: "Iniciar sesion",
+      accessTitle: "Crear cuenta o iniciar sesión",
+      signIn: "Iniciar sesión",
       signedIn: "Sesion iniciada",
       working: "Procesando...",
     },
@@ -314,6 +315,7 @@ const translations = {
     status: {
       accountRequiredForCloud:
         "Crea una cuenta para guardar en la nube y tener mas pizarras.",
+      accountRequiredForSharing: "Si deseas compartir un dibujo, primero debes crear una cuenta o iniciar sesión.",
       accountRequiredForMore: "Crea una cuenta para crear mas pizarras.",
       canvasLoadError: "No se pudo cargar el canvas",
       canvasLoading: "Cargando canvas...",
@@ -329,7 +331,7 @@ const translations = {
       creating: "Creando...",
       deleted: "Eliminado",
       duplicated: "Duplicado",
-      drawingLimitReached: "Limite de pizarras alcanzado.",
+      drawingLimitReached: "Límite alcanzado. Suscríbete para crear más pizarras.",
       loading: "Cargando dibujos...",
       noDrawings: "Aun no hay dibujos",
       ready: "Listo",
@@ -376,6 +378,7 @@ const translations = {
       resendCode: "Resend code",
       sendCode: "Send code",
       sendError: "Could not send the code. Try again later.",
+      accessTitle: "Create an account or sign in",
       signIn: "Sign in",
       signedIn: "Signed in",
       working: "Working...",
@@ -414,6 +417,7 @@ const translations = {
     status: {
       accountRequiredForCloud:
         "Create an account to save to the cloud and keep more boards.",
+      accountRequiredForSharing: "To share a drawing, first create an account or sign in.",
       accountRequiredForMore: "Create an account to create more boards.",
       canvasLoadError: "Canvas could not load",
       canvasLoading: "Loading canvas...",
@@ -429,7 +433,7 @@ const translations = {
       creating: "Creating...",
       deleted: "Deleted",
       duplicated: "Duplicated",
-      drawingLimitReached: "Board limit reached.",
+      drawingLimitReached: "Limit reached. Subscribe to create more boards.",
       loading: "Loading drawings...",
       noDrawings: "No drawings yet",
       ready: "Ready",
@@ -515,6 +519,7 @@ function DrawWorkspace({
   const sidebarRef = useRef<HTMLElement>(null);
   const [status, setStatus] = useState<string>(t.status.ready);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [authPromptMessage, setAuthPromptMessage] = useState<string>();
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [drawingLimit, setDrawingLimit] = useState(defaultRegisteredDrawingLimit);
   const [sharePanelOpen, setSharePanelOpen] = useState(false);
@@ -555,6 +560,7 @@ function DrawWorkspace({
         localDraftToImport.current = activeDrawing;
       }
 
+      setAuthPromptMessage(message);
       setAuthPromptOpen(true);
       if (message) {
         setStatus(message);
@@ -767,6 +773,66 @@ function DrawWorkspace({
       mobileMenuRef.current?.focus();
     };
   }, [isMobile, sidebarCollapsed, authPromptOpen, adminPanelOpen, sharePanelOpen, pendingDelete]);
+
+  // Lock horizontal swipes only after intent is clear, preserving list scrolling.
+  useEffect(() => {
+    const panel = sidebarRef.current;
+    if (!panel || !isMobile || sidebarCollapsed) return;
+    let gesture: { x: number; y: number; axis: "pending" | "horizontal" | "vertical"; offset: number } | null = null;
+    let suppressClick = false;
+    const reset = () => {
+      gesture = null;
+      panel.style.removeProperty("transform");
+    };
+    const start = (event: TouchEvent) => {
+      suppressClick = false;
+      if (event.touches.length !== 1) { reset(); return; }
+      const target = event.target as HTMLElement;
+      if (target.closest("input, select, textarea")) return;
+      const touch = event.touches[0];
+      gesture = { x: touch.clientX, y: touch.clientY, axis: "pending", offset: 0 };
+    };
+    const move = (event: TouchEvent) => {
+      if (!gesture) return;
+      if (event.touches.length !== 1) { reset(); return; }
+      const dx = event.touches[0].clientX - gesture.x;
+      const dy = event.touches[0].clientY - gesture.y;
+      if (gesture.axis === "pending") {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+        gesture.axis = dx < 0 && Math.abs(dx) > Math.abs(dy) * 1.2 ? "horizontal" : "vertical";
+      }
+      if (gesture.axis !== "horizontal") return;
+      if (event.cancelable) event.preventDefault();
+      suppressClick = true;
+      gesture.offset = Math.min(0, dx);
+      panel.style.transform = `translateX(${gesture.offset}px)`;
+    };
+    const end = () => {
+      const close = gesture?.axis === "horizontal" && -gesture.offset >= Math.min(80, panel.clientWidth * 0.25);
+      reset();
+      if (close) setSidebarCollapsed(true);
+    };
+    const cancel = () => { reset(); };
+    const click = (event: MouseEvent) => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClick = false;
+    };
+    panel.addEventListener("touchstart", start, { passive: true });
+    panel.addEventListener("touchmove", move, { passive: false });
+    panel.addEventListener("touchend", end);
+    panel.addEventListener("touchcancel", cancel);
+    panel.addEventListener("click", click, true);
+    return () => {
+      reset();
+      panel.removeEventListener("touchstart", start);
+      panel.removeEventListener("touchmove", move);
+      panel.removeEventListener("touchend", end);
+      panel.removeEventListener("touchcancel", cancel);
+      panel.removeEventListener("click", click, true);
+    };
+  }, [isMobile, sidebarCollapsed]);
 
   const createDrawing = useCallback(async () => {
     if (!user) {
@@ -1230,7 +1296,7 @@ function DrawWorkspace({
             aria-controls="drawing-navigation" onClick={() => setSidebarCollapsed(false)}>
             <Icon name="menu" />
           </button>
-          <span>{t.appName}</span>
+          <span><img src="/icons/draw.svg" width="24" height="24" alt="" />{t.appName}</span>
           {!sharedLink ? <button className="icon-button" type="button"
             aria-label={t.labels.createDrawing} title={t.labels.createDrawing}
             onClick={createDrawing}><Icon name="plus" /></button> : null}
@@ -1254,16 +1320,16 @@ function DrawWorkspace({
               <div className="toolbar-actions">
                 {!isCloudAccount && !sharedLink ? (
                   <button
-                    aria-label={t.labels.cloudSave}
+                    aria-label={t.labels.share}
                     className="icon-text-button primary"
-                    title={t.labels.cloudSave}
+                    title={t.labels.share}
                     type="button"
                     onClick={() =>
-                      openAuthPrompt(t.status.accountRequiredForCloud, true)
+                      openAuthPrompt(t.status.accountRequiredForSharing, true)
                     }
                   >
-                    <Icon name="cloud" />
-                    <span>{t.labels.cloudSave}</span>
+                    <Icon name="share" />
+                    <span>{t.labels.share}</span>
                   </button>
                 ) : null}
                 {isCloudAccount && activeAccess === "owner" ? (
@@ -1313,6 +1379,7 @@ function DrawWorkspace({
           pb={pb}
           setLocale={setLocale}
           onClose={closeAuthPrompt}
+          message={authPromptMessage}
         />
       ) : null}
       {adminPanelOpen && isAdmin ? (
@@ -1322,7 +1389,7 @@ function DrawWorkspace({
           onClose={() => setAdminPanelOpen(false)}
         />
       ) : null}
-      {sharePanelOpen && activeDrawing && activeAccess === "owner" ? (
+      {sharePanelOpen && isCloudAccount && activeDrawing && activeAccess === "owner" ? (
         <SharePanel
           drawing={activeDrawing}
           locale={locale}
@@ -1526,12 +1593,14 @@ function DrawingEditor({
 }
 
 function AuthPanel({
+  message,
   locale,
   onClose,
   pb,
   setLocale,
 }: {
   locale: Locale;
+  message?: string;
   onClose?: () => void;
   pb: PocketBase;
   setLocale: (locale: Locale) => void;
@@ -1596,7 +1665,7 @@ function AuthPanel({
         <div className="auth-header">
           <div>
             <p className="eyebrow">{t.appName}</p>
-            <h1>{t.auth.signIn}</h1>
+            <h1>{t.auth.accessTitle}</h1>
           </div>
           <div className="auth-header-actions">
             {!onClose ? (
@@ -1621,7 +1690,7 @@ function AuthPanel({
         </div>
         {step === "email" ? (
           <>
-            <p className="auth-description">{t.auth.cloudPrompt}</p>
+            <p className="auth-description">{message || t.auth.cloudPrompt}</p>
             <input
               autoComplete="email"
               onChange={(event) => setEmail(event.currentTarget.value)}

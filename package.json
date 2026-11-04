@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "local": "bash scripts/local.sh",
-    "build": "vite build --config vite.config.ts --outDir dist/client --emptyOutDir && node scripts/copy-hosting.mjs",
+    "build": "vite build --config vite.config.ts --outDir dist/client --emptyOutDir && node scripts/build-pwa.mjs && node scripts/copy-hosting.mjs",
     "start": "vite preview --config vite.config.ts --host 0.0.0.0 --outDir dist/client"
   },
   "dependencies": {

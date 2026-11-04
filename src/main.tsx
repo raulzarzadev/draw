@@ -9,3 +9,11 @@ createRoot(document.getElementById("root")!).render(
     <DrawCanvas />
   </StrictMode>,
 );
+
+// Never cache Vite development modules. Production workers update on reload.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+      .catch(error => console.error("Could not register Draw offline support", error));
+  });
+}
