@@ -727,6 +727,7 @@ select:disabled:where(:not(.excalidraw *)) {
   overflow: hidden;
 }
 
+.mobile-toolbar-action,
 .mobile-workspace-header,
 .sidebar-backdrop {
   display: none;
@@ -873,7 +874,7 @@ select:disabled:where(:not(.excalidraw *)) {
   .draw-workspace.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); }
   .canvas-column {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     background: #fff;
   }
   .mobile-workspace-header {
@@ -885,12 +886,14 @@ select:disabled:where(:not(.excalidraw *)) {
   .mobile-workspace-header > span { flex: 1; color: #626a73; font-size: 12px; font-weight: 700; }
   .mobile-workspace-header .icon-button { background: transparent; border-color: transparent; }
   .canvas-toolbar {
-    gap: 8px;
-    padding: 4px max(8px, env(safe-area-inset-right)) 8px max(8px, env(safe-area-inset-left));
+    gap: 2px;
+    padding: max(2px, env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) 2px max(4px, env(safe-area-inset-left));
   }
   .drawing-heading { flex: 1; flex-direction: column; align-items: stretch; gap: 0; }
-  .canvas-toolbar input { width: 100%; min-width: 0; min-height: 44px; padding: 0 8px; font-size: 16px; text-overflow: ellipsis; }
-  .drawing-save-status { padding-inline: 8px; font-size: 11px; line-height: 16px; }
+  .canvas-toolbar input { width: 100%; min-width: 0; min-height: 26px; height: 26px; padding: 0 4px; font-size: 16px; text-overflow: ellipsis; }
+  .drawing-save-status { padding-inline: 4px; font-size: 10px; line-height: 14px; }
+  .canvas-toolbar .mobile-toolbar-action { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-color: transparent; background: transparent; }
+  .canvas-toolbar button:focus-visible { outline: 2px solid #655dc4; outline-offset: -2px; }
   .toolbar-actions { flex: 0 0 auto; gap: 4px; }
   .toolbar-actions .icon-text-button { width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
   .toolbar-actions .icon-text-button span { display: none; }
@@ -933,45 +936,90 @@ select:disabled:where(:not(.excalidraw *)) {
   left: 12px;
   right: 12px;
   width: fit-content;
-  max-width: calc(100% - 24px);
+  max-width: min(360px, calc(100% - 24px));
   margin: 0 auto;
   border: 1px solid #e8c58b;
   border-radius: 8px;
   background: #fff8e8;
   color: #75490c;
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 6px 10px;
+  font-size: 12px;
   line-height: 1.4;
   pointer-events: none;
 }
 
-/* Camera controls make the space beyond the screen reachable with a Pencil. */
-.canvas-navigation {
-  position: absolute;
-  z-index: 5;
-  bottom: calc(64px + env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
+
+/* Keep the drawing toolbar focused on editing and canvas navigation. */
+.canvas-frame .excalidraw .default-sidebar-trigger {
+  display: none;
+}
+
+/* Place mobile navigation immediately below the drawing tools. */
+.canvas-frame .excalidraw .App-toolbar-container:has(> .mobile-misc-tools-container) {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  grid-auto-flow: row;
+  align-items: start;
+  max-width: 100%;
+  min-width: 0;
+}
+.canvas-frame .excalidraw .App-toolbar--mobile {
+  box-sizing: border-box;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  max-width: 100%;
+}
+
+.canvas-frame .excalidraw .mobile-misc-tools-container {
+  position: static;
+  grid-column: 1;
+  grid-row: 2;
+  flex-shrink: 0;
+  max-width: 100%;
+  align-self: flex-start;
+  flex-direction: row;
+  margin-top: 6px;
+  border: 1px solid var(--sidebar-border-color);
+  border-radius: var(--border-radius-lg);
+}
+.canvas-frame .excalidraw .mobile-misc-tools-container .ToolIcon__icon {
+  width: 30px;
+  height: 30px;
+}
+
+.canvas-frame .excalidraw .canvas-quick-color {
+  grid-column: 2;
+  grid-row: 2;
   display: flex;
-  gap: 4px;
-  max-width: calc(100% - 24px);
-  padding: 4px;
-  border: 1px solid #d7dbe2;
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 2px 8px rgb(25 31 43 / 8%);
+  align-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 6px 0 0 6px;
 }
-.canvas-navigation button {
-  min-height: 44px;
-  border-color: transparent;
-  font-size: 13px;
-  white-space: nowrap;
+ .canvas-frame .excalidraw .canvas-quick-color {
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid var(--sidebar-border-color);
+  border-radius: 6px;
+  background: var(--island-bg-color);
+  color: var(--color-on-surface);
+  cursor: pointer;
 }
-.canvas-navigation button[aria-pressed="true"] {
-  background: #eeedf9;
-  color: #40378c;
-  border-color: #c8c3e9;
+.canvas-frame .excalidraw .canvas-quick-color[aria-expanded="true"] { background: var(--color-primary-light); }
+.canvas-frame .excalidraw .canvas-quick-color:focus-visible { outline: 2px solid #655dc4; outline-offset: 2px; }
+
+.canvas-color-swatch {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgb(0 0 0 / 20%);
+  border-radius: 4px;
 }
-.canvas-frame:has(.canvas-navigation) .laser-status {
-  bottom: calc(128px + env(safe-area-inset-bottom));
+
+/* Keep repeat drawing enabled by default without a separate toolbar control. */
+.canvas-frame .excalidraw .ToolIcon__lock {
+  display: none;
 }

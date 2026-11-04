@@ -1,6 +1,7 @@
 "use client";
 
 import PocketBaseClient from "pocketbase";
+import { createPortal } from "react-dom";
 import type PocketBase from "pocketbase";
 import type { AuthModel } from "pocketbase";
 import type { ComponentType } from "react";
@@ -98,6 +99,7 @@ type ExcalidrawModule = {
     onChange?: (elements: unknown[], appState: unknown, files: unknown) => void;
     UIOptions: Record<string, unknown>;
     viewModeEnabled?: boolean;
+    renderTopRightUI?: (isMobile: boolean, appState: ReturnType<EditorAPI["getAppState"]>) => React.ReactNode;
     excalidrawAPI?: (api: EditorAPI) => void;
     isCollaborating?: boolean;
     onPointerUpdate?: (event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void;
@@ -297,10 +299,6 @@ const translations = {
       language: "Idioma",
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
-      moveCanvas: "Mover lienzo",
-      resumeDrawing: "Volver a dibujar",
-      fitDrawing: "Ver todo",
-      canvasNavigation: "Navegación del lienzo",
       signInToEdit: "Iniciar sesión para editar",
       reloadDrawings: "Volver a cargar pizarras",
       share: "Compartir",
@@ -344,7 +342,7 @@ const translations = {
       duplicated: "Duplicado",
       couldNotLoadLimit: "Tus pizarras están disponibles, pero no se pudo consultar el límite. Reconecta para crear más.",
       drawingLimitReached: "Límite alcanzado. Suscríbete para crear más pizarras.",
-      laserUnavailable: "No se pudo conectar el láser compartido. Revisa tu conexión y vuelve a cargar el dibujo.",
+      laserUnavailable: "Puntero láser sin conexión. No afecta al guardado.",
       loading: "Cargando dibujos...",
       noDrawings: "Aun no hay dibujos",
       ready: "Listo",
@@ -408,10 +406,6 @@ const translations = {
       language: "Language",
       showDrawings: "Show drawings",
       signOut: "Sign out",
-      moveCanvas: "Move canvas",
-      resumeDrawing: "Resume drawing",
-      fitDrawing: "Fit drawing",
-      canvasNavigation: "Canvas navigation",
       signInToEdit: "Sign in to edit",
       reloadDrawings: "Reload saved boards",
       share: "Share",
@@ -455,7 +449,7 @@ const translations = {
       duplicated: "Duplicated",
       couldNotLoadLimit: "Your boards are available, but the limit could not be loaded. Reconnect to create more.",
       drawingLimitReached: "Limit reached. Subscribe to create more boards.",
-      laserUnavailable: "Could not connect the shared laser. Check your connection and reload the drawing.",
+      laserUnavailable: "Laser pointer offline. Saving is unaffected.",
       loading: "Loading drawings...",
       noDrawings: "No drawings yet",
       ready: "Ready",
@@ -1346,7 +1340,7 @@ function DrawWorkspace({
       </aside>
 
       <section className="canvas-column" inert={isMobile && !sidebarCollapsed}>
-        <div className="mobile-workspace-header">
+        {!activeDrawing ? <div className="mobile-workspace-header">
           <button ref={mobileMenuRef} className="icon-button" type="button"
             aria-label={t.labels.showDrawings} aria-expanded={!sidebarCollapsed}
             aria-controls="drawing-navigation" onClick={() => setSidebarCollapsed(false)}>
@@ -1356,10 +1350,15 @@ function DrawWorkspace({
           {!sharedLink ? <button className="icon-button" type="button"
             aria-label={t.labels.createDrawing} title={t.labels.createDrawing}
             onClick={createDrawing}><Icon name="plus" /></button> : null}
-        </div>
+        </div> : null}
         {activeDrawing ? (
           <>
             <div className="canvas-toolbar">
+              <button ref={mobileMenuRef} className="icon-button mobile-toolbar-action" type="button"
+                aria-label={t.labels.showDrawings} aria-expanded={!sidebarCollapsed}
+                aria-controls="drawing-navigation" onClick={() => setSidebarCollapsed(false)}>
+                <Icon name="menu" />
+              </button>
               <div className="drawing-heading">
               <input
                 aria-label={t.labels.title}
@@ -1374,6 +1373,9 @@ function DrawWorkspace({
               <span className="drawing-save-status" role="status">{status}</span>
               </div>
               <div className="toolbar-actions">
+                {!sharedLink ? <button className="icon-button mobile-toolbar-action" type="button"
+                  aria-label={t.labels.createDrawing} title={t.labels.createDrawing}
+                  onClick={createDrawing}><Icon name="plus" /></button> : null}
                 {sharedLink && !userId && activeDrawing.share_mode === "edit" ? (
                   <button className="icon-text-button primary" type="button"
                     aria-label={t.labels.signInToEdit} title={t.labels.signInToEdit}
@@ -1493,9 +1495,41 @@ function DrawingEditor({
   const laserSend = useRef<(event: { pointer: { x: number; y: number; tool: "pointer" | "laser" }; button: "down" | "up" }) => void>(() => {});
   const [loadError, setLoadError] = useState("");
   const [laserError, setLaserError] = useState(false);
-  const [movingCanvas, setMovingCanvas] = useState(false);
-  const previousTool = useRef<Parameters<EditorAPI["setActiveTool"]>[0]>({ type: "selection" });
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [lockMenuHost, setLockMenuHost] = useState<HTMLDivElement | null>(null);
+  const [toolLocked, setToolLocked] = useState(true);
+
+  // Excalidraw has no public slot for extra-tool menu items. Mount our
+  // control beside its laser item and clean it up with the editor/menu.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || !module || readOnly) return;
+    let host: HTMLDivElement | null = null;
+    const syncMenu = () => {
+      const laser = frame.querySelector('.App-toolbar__extra-tools-dropdown [data-testid="toolbar-laser"]');
+      if (!laser) {
+        if (host) { host.remove(); host = null; setLockMenuHost(null); }
+        return;
+      }
+      if (host?.isConnected) return;
+      host = document.createElement("div");
+      host.className = "extra-tool-lock-slot";
+      laser.after(host);
+      setLockMenuHost(host);
+    };
+    const observer = new MutationObserver(syncMenu);
+    observer.observe(frame, { childList: true, subtree: true });
+    syncMenu();
+    return () => { observer.disconnect(); host?.remove(); };
+  }, [module, readOnly]);
   const t = translations[locale];
+
+  useEffect(() => {
+    if (!editorAPI) return;
+    editorAPI.updateScene({
+      appState: { activeTool: { ...editorAPI.getAppState().activeTool, locked: true } },
+    });
+  }, [editorAPI]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1615,27 +1649,26 @@ function DrawingEditor({
   const { Excalidraw, serializeAsJSON } = module;
 
   return (
-    <div className="canvas-frame">
-      {laserError ? <p className="laser-status" role="status">{t.status.laserUnavailable}</p> : null}
-      {editorAPI ? (
-        <div className="canvas-navigation" role="group" aria-label={t.labels.canvasNavigation}>
-          {!readOnly ? <button type="button" aria-pressed={movingCanvas}
-            onClick={() => {
-              const tool = editorAPI.getAppState().activeTool;
-              if (tool.type === "hand") {
-                editorAPI.setActiveTool(previousTool.current);
-              } else {
-                previousTool.current = tool;
-                editorAPI.setActiveTool({ type: "hand" });
-              }
-            }}>
-            {movingCanvas ? t.labels.resumeDrawing : t.labels.moveCanvas}
-          </button> : null}
-          <button type="button" onClick={() => editorAPI.scrollToContent(
-            editorAPI.getSceneElements(), { fitToContent: true, animate: false },
-          )}>{t.labels.fitDrawing}</button>
-        </div>
+    <div className="canvas-frame" ref={frameRef}>
+      {lockMenuHost ? createPortal(
+        <button type="button" className="dropdown-menu-item dropdown-menu-item-base"
+          aria-pressed={toolLocked}
+          onClick={() => {
+            if (!editorAPI) return;
+            const activeTool = editorAPI.getAppState().activeTool;
+            editorAPI.updateScene({ appState: { activeTool: { ...activeTool, locked: !activeTool.locked } } });
+          }}>
+          <span className="dropdown-menu-item__icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="5" y="10" width="14" height="11" rx="2" />
+              <path d={toolLocked ? "M8 10V7a4 4 0 0 1 8 0v3" : "M8 10V7a4 4 0 0 1 8 0"} />
+            </svg>
+          </span>
+          <span className="dropdown-menu-item__text">{locale === "es" ? "Mantener herramienta activa" : "Keep tool active"}</span>
+          <span aria-hidden="true">{toolLocked ? "✓" : ""}</span>
+        </button>, lockMenuHost,
       ) : null}
+      {laserError ? <p className="laser-status" role="status">{t.status.laserUnavailable}</p> : null}
       <Excalidraw
         initialData={drawing.scene}
         excalidrawAPI={setEditorAPI}
@@ -1643,8 +1676,7 @@ function DrawingEditor({
         onPointerUpdate={event => laserSend.current(event)}
         langCode={locale === "es" ? "es-ES" : "en"}
         onChange={(elements, appState, files) => {
-          const state = appState as ReturnType<EditorAPI["getAppState"]>;
-          setMovingCanvas(state.activeTool.type === "hand");
+          setToolLocked((appState as ReturnType<EditorAPI["getAppState"]>).activeTool.locked);
           if (readOnly || applyingRemote.current) return;
           const serialized = serializeAsJSON(elements, appState, files, "local");
           const scene = JSON.parse(serialized) as SceneData;
@@ -1655,6 +1687,36 @@ function DrawingEditor({
           if (fingerprint === lastFingerprint.current) return;
           lastFingerprint.current = fingerprint;
           scheduleSave(scene);
+        }}
+        renderTopRightUI={(mobile, state) => {
+          if (!mobile || readOnly) return null;
+          const selectedColors = new Set(editorAPI?.getSceneElements()
+            .filter(element => state.selectedElementIds[element.id])
+            .map(element => element.strokeColor));
+          const mixed = selectedColors.size > 1;
+          const color = selectedColors.size === 1 ? [...selectedColors][0] : state.currentItemStrokeColor;
+          const label = locale === "es"
+            ? `Colores y estilo: ${mixed ? "varios colores" : color}`
+            : `Colors and style: ${mixed ? "mixed colors" : color}`;
+          return (
+          <button className="canvas-quick-color" type="button"
+            title={label}
+            aria-label={label}
+            aria-expanded={state.openMenu === "shape"}
+            onClick={() => {
+              if (!editorAPI) return;
+              const current = editorAPI.getAppState();
+              const opening = current.openMenu !== "shape";
+              const hasSelection = Object.values(current.selectedElementIds).some(Boolean);
+              if (opening && !hasSelection && ["selection", "eraser", "hand", "laser", "custom"].includes(current.activeTool.type)) {
+                editorAPI.setActiveTool({ type: "freedraw" });
+              }
+              editorAPI.updateScene({ appState: { openMenu: opening ? "shape" : null } });
+            }}>
+            <span className="canvas-color-swatch" aria-hidden="true"
+              style={{ background: mixed ? "conic-gradient(#e03131 0deg 90deg, #1971c2 90deg 180deg, #2f9e44 180deg 270deg, #fcc419 270deg)" : color }} />
+          </button>
+          );
         }}
         viewModeEnabled={readOnly}
         UIOptions={{
