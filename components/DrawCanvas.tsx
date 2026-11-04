@@ -296,6 +296,7 @@ const translations = {
       language: "Idioma",
       showDrawings: "Mostrar dibujos",
       signOut: "Salir",
+      signInToEdit: "Iniciar sesión para editar",
       reloadDrawings: "Volver a cargar pizarras",
       share: "Compartir",
       title: "Titulo del dibujo",
@@ -319,6 +320,7 @@ const translations = {
     status: {
       accountRequiredForCloud:
         "Crea una cuenta para guardar en la nube y tener mas pizarras.",
+      accountRequiredForEditing: "Para editar este dibujo compartido, primero debes crear una cuenta o iniciar sesión.",
       accountRequiredForSharing: "Si deseas compartir un dibujo, primero debes crear una cuenta o iniciar sesión.",
       accountRequiredForMore: "Crea una cuenta para crear mas pizarras.",
       canvasLoadError: "No se pudo cargar el canvas",
@@ -400,6 +402,7 @@ const translations = {
       language: "Language",
       showDrawings: "Show drawings",
       signOut: "Sign out",
+      signInToEdit: "Sign in to edit",
       reloadDrawings: "Reload saved boards",
       share: "Share",
       title: "Drawing title",
@@ -423,6 +426,7 @@ const translations = {
     status: {
       accountRequiredForCloud:
         "Create an account to save to the cloud and keep more boards.",
+      accountRequiredForEditing: "To edit this shared drawing, first create an account or sign in.",
       accountRequiredForSharing: "To share a drawing, first create an account or sign in.",
       accountRequiredForMore: "Create an account to create more boards.",
       canvasLoadError: "Canvas could not load",
@@ -560,7 +564,7 @@ function DrawWorkspace({
     ? "owner"
     : activeDrawing?.owner && activeDrawing.owner === user?.id
     ? "owner"
-    : activeDrawing?.share_mode === "edit"
+    : userId && activeDrawing?.share_mode === "edit"
       ? "edit"
       : "view";
   const canEditActiveDrawing = activeAccess === "owner" || activeAccess === "edit";
@@ -706,6 +710,7 @@ function DrawWorkspace({
 
   useEffect(() => {
     if (sharedLink) {
+      if (userId) setAuthPromptOpen(false);
       void loadSharedDrawing(sharedLink);
       return;
     }
@@ -1042,7 +1047,7 @@ function DrawWorkspace({
         return true;
       }
 
-      if (currentAccount.current !== (user?.id ?? null)) return true;
+      if ((sharedLink && !currentAccount.current) || currentAccount.current !== (user?.id ?? null)) return true;
       setStatus(t.status.saving);
 
       try {
@@ -1089,7 +1094,7 @@ function DrawWorkspace({
   );
 
   const updateSharing = useCallback(async (mode: ShareMode) => {
-    if (!activeDrawing || activeAccess !== "owner") {
+    if (!userId || !activeDrawing || activeAccess !== "owner") {
       return;
     }
 
@@ -1112,7 +1117,7 @@ function DrawWorkspace({
       setStatus(error instanceof Error ? error.message : t.status.couldNotShare);
       throw error;
     }
-  }, [activeAccess, activeDrawing, pb, t.status.couldNotShare, t.status.saved]);
+  }, [activeAccess, activeDrawing, pb, t.status.couldNotShare, t.status.saved, userId]);
 
   const flushScene = useCallback(async () => {
     if (savingScene.current) return;
@@ -1358,6 +1363,13 @@ function DrawWorkspace({
               <span className="drawing-save-status" role="status">{status}</span>
               </div>
               <div className="toolbar-actions">
+                {sharedLink && !userId && activeDrawing.share_mode === "edit" ? (
+                  <button className="icon-text-button primary" type="button"
+                    aria-label={t.labels.signInToEdit} title={t.labels.signInToEdit}
+                    onClick={() => openAuthPrompt(t.status.accountRequiredForEditing)}>
+                    <Icon name="user" /><span>{t.labels.signInToEdit}</span>
+                  </button>
+                ) : null}
                 {!isCloudAccount && !sharedLink ? (
                   <button
                     aria-label={t.labels.share}

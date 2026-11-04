@@ -66,13 +66,25 @@ test("PocketBase merges simultaneous saves and protects scene and laser subscrip
     await admin.collection("_superusers").authWithPassword("test@example.com", password);
     const user = await admin.collection("users").create({ email: "owner@example.com", password, passwordConfirm: password });
     const owner = await admin.collection("users").impersonate(user.id, 600);
-    const editor = new PocketBase(baseURL), viewer = new PocketBase(baseURL), outsider = new PocketBase(baseURL);
+    const editingUser = await admin.collection("users").create({ email: "editor@example.com", password, passwordConfirm: password });
+    const editor = await admin.collection("users").impersonate(editingUser.id, 600);
+    const viewer = new PocketBase(baseURL), outsider = new PocketBase(baseURL);
     clients.push(owner, editor, viewer, outsider);
     const drawing = await owner.collection("drawings").create({ owner: user.id, title: "Realtime test", scene: { elements: [] } });
     const token = randomBytes(24).toString("hex");
     await owner.collection("drawings").update(drawing.id, { share_mode: "edit", share_token: token });
     const options = { query: { share_token: token }, requestKey: null };
     const mergeOptions = { query: { share_token: token, scene_merge: "1" }, requestKey: null };
+    // Anyone with the valid link can view, but anonymous users cannot write.
+    assert.equal((await viewer.collection("drawings").getOne(drawing.id, options)).id, drawing.id);
+    await assert.rejects(() => viewer.collection("drawings").update(drawing.id, { title: "Anonymous rename" }, options));
+    await assert.rejects(() => viewer.collection("drawings").update(drawing.id, { scene: { elements: [] } }, mergeOptions));
+    await assert.rejects(() => viewer.collection("drawings").update(drawing.id, { scene: { elements: [] } }, options));
+    await assert.rejects(() => viewer.send(`/api/drawings/${drawing.id}/laser`, { ...options, method: "POST", body: { sessionId: "anonymous", x: 1, y: 1, active: true } }));
+    await assert.rejects(() => editor.collection("drawings").update(drawing.id, { title: "Missing link" }));
+    await editor.collection("drawings").update(drawing.id, { title: "Authenticated editor" }, options);
+    await assert.rejects(() => editor.collection("drawings").update(drawing.id, { owner: editingUser.id }, options));
+    await assert.rejects(() => editor.collection("drawings").update(drawing.id, { share_mode: "restricted" }, options));
     const events = [], denied = [], lasers = [], deniedLasers = [];
     await viewer.collection("drawings").subscribe(drawing.id, event => events.push(event), options);
     await outsider.collection("drawings").subscribe(drawing.id, event => denied.push(event));
